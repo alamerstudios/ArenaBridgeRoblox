@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NexusAI Bridge — Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f19;
+    --panel: #131a2a;
+    --panel-2: #1a2336;
+    --border: #263149;
+    --text: #e6ecf7;
+    --muted: #8494b4;
+    --accent: #4f8cff;
+    --ok: #35d07f;
+    --warn: #ffb020;
+    --err: #ff5f6d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+  h1 span { color: var(--accent); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px;
+    border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.err { background: var(--err); }
+  .spacer { flex: 1; }
+  input, select, textarea, button {
+    font-family: inherit; font-size: 13px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 11px; outline: none;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+  textarea { font-family: var(--mono); resize: vertical; width: 100%; }
+  button {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    cursor: pointer; font-weight: 600;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: var(--panel-2); border-color: var(--border); color: var(--text); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main { padding: 24px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); max-width: 1500px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+  .card.wide { grid-column: 1 / -1; }
+  .grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; }
+  .grid dt { color: var(--muted); }
+  .grid dd { margin: 0; font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 11px; text-align: center; }
+  .stat b { display: block; font-size: 20px; font-family: var(--mono); }
+  .stat small { color: var(--muted); font-size: 11px; }
+  pre {
+    background: #070b14; border: 1px solid var(--border); border-radius: 9px;
+    padding: 12px; overflow: auto; max-height: 340px; font-family: var(--mono);
+    font-size: 12px; margin: 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .log { max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12px; }
+  .log div { padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,.04); display: flex; gap: 9px; }
+  .log time { color: var(--muted); flex-shrink: 0; }
+  .lvl { flex-shrink: 0; width: 44px; font-weight: 700; }
+  .lvl.debug { color: var(--muted); }
+  .lvl.info { color: var(--accent); }
+  .lvl.warn { color: var(--warn); }
+  .lvl.error { color: var(--err); }
+  .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+  .row > * { flex: 0 0 auto; }
+  .row .grow { flex: 1 1 160px; min-width: 0; }
+  .banner { background: #070b14; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .err-box { color: var(--err); font-size: 12.5px; margin-top: 10px; min-height: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td.mono { font-family: var(--mono); }
+  .tag { padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+  .tag.completed { background: rgba(53,208,127,.15); color: var(--ok); }
+  .tag.failed, .tag.timeout { background: rgba(255,95,109,.15); color: var(--err); }
+  .tag.pending, .tag.dispatched { background: rgba(255,176,32,.15); color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Nexus<span>AI</span> Bridge</h1>
+  <span class="pill"><span class="dot" id="dot"></span><span id="conn">nicht verbunden</span></span>
+  <span class="pill" id="uptime">uptime —</span>
+  <div class="spacer"></div>
+  <input id="token" type="password" placeholder="Bridge-Token einfügen" style="width:280px" autocomplete="off" />
+  <button id="connect">Verbinden</button>
+  <button id="toggle" class="ghost" title="Token anzeigen/verbergen">👁</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Session</h2>
+    <dl class="grid">
+      <dt>Status</dt><dd id="s-status">—</dd>
+      <dt>Session-ID</dt><dd id="s-id">—</dd>
+      <dt>URL</dt><dd id="s-url">—</dd>
+      <dt>PID</dt><dd id="s-pid">—</dd>
+      <dt>Gestartet</dt><dd id="s-started">—</dd>
+      <dt>Token</dt><dd id="s-token">—</dd>
+      <dt>Rotationen</dt><dd id="s-rot">—</dd>
+    </dl>
+    <div class="row" style="margin-top:14px">
+      <button id="rotate" class="ghost">Token rotieren</button>
+      <button id="copy" class="ghost">Token kopieren</button>
+    </div>
+    <p class="hint">Beim Rotieren wird der alte Token sofort ungültig — alle Clients (auch das Studio-Plugin) müssen neu verbunden werden.</p>
+  </section>
+
+  <section class="card">
+    <h2>Statistik</h2>
+    <div class="stats">
+      <div class="stat"><b id="st-req">0</b><small>Requests</small></div>
+      <div class="stat"><b id="st-ok">0</b><small>Auth OK</small></div>
+      <div class="stat"><b id="st-fail">0</b><small>Auth Fail</small></div>
+      <div class="stat"><b id="st-q">0</b><small>Queued</small></div>
+      <div class="stat"><b id="st-done">0</b><small>Fertig</small></div>
+      <div class="stat"><b id="st-err">0</b><small>Fehler</small></div>
+    </div>
+    <h2 style="margin-top:18px">Verbundene Clients</h2>
+    <table><thead><tr><th>Client</th><th>Version</th><th>Place</th><th>Zuletzt</th></tr></thead>
+    <tbody id="clients"><tr><td colspan="4" style="color:var(--muted)">Kein Client verbunden — starte das NexusAI-Plugin in Roblox Studio.</td></tr></tbody></table>
+  </section>
+
+  <section class="card wide">
+    <h2>Befehl an Roblox Studio senden</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="action" class="grow"></select>
+      <button id="send">Senden</button>
+      <button id="fill" class="ghost">Beispiel einfügen</button>
+    </div>
+    <textarea id="params" rows="6" spellcheck="false">{}</textarea>
+    <div class="err-box" id="cmd-err"></div>
+    <pre id="cmd-out" style="margin-top:10px">Noch kein Befehl gesendet.</pre>
+  </section>
+
+  <section class="card">
+    <h2>Befehlsverlauf</h2>
+    <table><thead><tr><th>ID</th><th>Aktion</th><th>Status</th><th>Dauer</th></tr></thead>
+    <tbody id="history"><tr><td colspan="4" style="color:var(--muted)">—</td></tr></tbody></table>
+  </section>
+
+  <section class="card">
+    <h2>Logs</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="loglevel" class="ghost">
+        <option value="debug">debug</option>
+        <option value="info" selected>info</option>
+        <option value="warn">warn</option>
+        <option value="error">error</option>
+      </select>
+      <label class="pill"><input type="checkbox" id="autoscroll" checked style="all:revert"> Autoscroll</label>
+    </div>
+    <div class="log" id="logs"><div style="color:var(--muted)">Verbinde dich, um Logs zu sehen.</div></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Verbindungsdaten</h2>
+    <div class="banner" id="snippet">Verbinde dich, um die Beispiel-Requests mit deinem aktuellen Token zu sehen.</div>
+  </section>
+</main>
+
+<script src="/assets/dashboard.js"></script>
+</body>
+</html>
