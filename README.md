@@ -34,7 +34,7 @@ NexusAI Bridge: LAEUFT
 ============================================================
 ---BRIDGE---
 url: http://127.0.0.1:8787
-token: nxs_jr_l9Ig4cXkABBam9K6Ttq3v4j8W1RAj
+token: nxs_BEISPIEL_bei_jedem_Start_anders
 ---END---
 
 Dashboard : http://127.0.0.1:8787/dashboard?token=nxs_...

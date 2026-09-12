@@ -90,10 +90,13 @@ test('Session status hides the raw token by default', () => {
   assert.equal(session.toStatus({ includeToken: true }).token, session.token);
 });
 
-test('no static token literal exists in the source tree', async () => {
+test('no real token literal exists anywhere in the repository', async () => {
   const { execSync } = await import('node:child_process');
+  // Real tokens are base64url; placeholders in docs deliberately contain no
+  // base64url-only run long enough to match, and BEISPIEL/EXAMPLE is excluded.
   const out = execSync(
-    'grep -rInE "nxs_[A-Za-z0-9_-]{20,}" src public scripts roblox *.bat || true',
+    'grep -rInE "nxs_[A-Za-z0-9_-]{20,}" src public scripts roblox tests docs *.bat *.md ' +
+    '| grep -viE "BEISPIEL|EXAMPLE|PLACEHOLDER" || true',
     { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname },
   ).trim();
   assert.equal(out, '', `hardcoded token found:\n${out}`);
