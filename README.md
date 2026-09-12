@@ -76,23 +76,6 @@ Das Plugin zeigt danach:
 - Command‑Sender  
 - Statistik  
 - Token‑Rotation
-
----
-
-## ⚠️ Hinweise
-
-### 🔒 Cloudflare‑Tunnel
-Arena AI öffnet automatisch einen Tunnel, um deine Bridge zu testen.  
-Wenn du fertig bist → **Ctrl+C** im cloudflared‑Fenster drücken.
-
-### 👻 Phantom‑Client
-Ein leerer Handshake (`{}`) kann kurz einen Fake‑Client erzeugen.  
-Harmlos, verschwindet automatisch.
-
-### 🌐 Roblox HTTP Requests
-Falls du später HTTP aus Studio nutzen willst:  
-Aktiviere in **Game Settings → Security → Allow HTTP Requests**.
-
 ---
 
 ## 📚 Features
@@ -122,5 +105,11 @@ Arena AI kann automatisch:
 
 ---
 
+## 🔗 Verbindung zu Arena AI
 Arena AI verbindet sich automatisch, wenn du ihm **nur diesen Block** sendest:
-
+Verbinde dich mit meiner ArenaBridge und teste die Endpoints.
+---BRIDGE---
+url: Generierte URL
+token: <TOKEN>
+---END---
+Arena erkennt die Bridge, öffnet einen Tunnel und testet alle Endpoints.
