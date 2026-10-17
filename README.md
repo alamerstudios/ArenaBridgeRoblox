@@ -47,13 +47,13 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch. Beim ersten Start
    wird das SHA-256-verifizierte Cloudflared-Modul geladen; das kann je nach Verbindung kurz dauern.
 3. Roblox Studio nach der ersten Installation einmal neu starten.
-4. In Studio unter **Game Settings → Security → Allow HTTP Requests** aktivieren.
-5. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
-6. Bei der gewünschten Place auf **Prompt kopieren** klicken.
-7. Unten links **Arena AI öffnen** wählen und den Prompt in einen neuen Agent-Chat einfügen.
+4. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
+5. Bei der gewünschten Place auf **Prompt kopieren** klicken.
+6. Unten links **Arena AI öffnen** wählen und den Prompt in einen neuen Agent-Chat einfügen.
 
-Das Studio-Plugin zeigt nur den Verbindungsstatus. Es gibt dort bewusst keine Felder für URL,
-Token oder API-Key.
+Das Studio-Plugin aktiviert die von Roblox benötigte lokale HTTP-Freigabe automatisch. Ein
+manuelles Umschalten unter Game Settings ist nicht erforderlich. Die Kommunikation bleibt auf
+`127.0.0.1`; URL, Token und API-Key müssen im Plugin nicht eingegeben werden.
 
 ### Was im kopierten Prompt steht
 

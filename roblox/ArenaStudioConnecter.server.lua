@@ -6,7 +6,8 @@
     sich selbst. URL und Session-Token werden ausschließlich über einen separaten,
     nur lokal erreichbaren Discovery-Port geladen und niemals gespeichert.
 
-    Voraussetzung: Game Settings -> Security -> "Allow HTTP Requests" aktivieren.
+    Die lokale HTTP-Freigabe wird vom Plugin automatisch aktiviert. Roblox Studio
+    stellt für lokale Desktop-Bridges keine separate Nicht-HTTP-IPC-Schnittstelle bereit.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -65,7 +66,26 @@ local function decodeResponse(response: any): (boolean, any)
     return true, decoded
 end
 
+local function ensureHttpEnabled(): (boolean, string?)
+    if HttpService.HttpEnabled then
+        return true, nil
+    end
+
+    local ok, reason = pcall(function()
+        HttpService.HttpEnabled = true
+    end)
+    if ok and HttpService.HttpEnabled then
+        return true, nil
+    end
+    return false, "Roblox Studio konnte die lokale HTTP-Freigabe nicht automatisch aktivieren: " .. tostring(reason)
+end
+
 local function discoverSession(): (boolean, any)
+    local enabled, enableError = ensureHttpEnabled()
+    if not enabled then
+        return false, enableError
+    end
+
     local ok, response = pcall(function()
         return HttpService:RequestAsync({
             Url = DISCOVERY_URL,
@@ -82,6 +102,10 @@ end
 local function request(method: string, requestPath: string, body: any?): (boolean, any)
     if state.url == "" or state.token == "" then
         return false, "Bridge-Session ist noch nicht verfuegbar"
+    end
+    local enabled, enableError = ensureHttpEnabled()
+    if not enabled then
+        return false, enableError
     end
 
     local options = {
@@ -635,7 +659,7 @@ local function connectionLoop()
             local found, session = discoverSession()
             if not found or not session or not session.ok then
                 state.lastError = tostring(session)
-                setStatus("App nicht erreichbar.\nStarte Arena Studio Connecter und erlaube HTTP Requests.", COLOR_ERR)
+                setStatus("App nicht erreichbar.\nStarte den Connecter; lokale Freigabe erfolgt automatisch.", COLOR_ERR)
                 task.wait(RECONNECT_WAIT)
                 continue
             end
