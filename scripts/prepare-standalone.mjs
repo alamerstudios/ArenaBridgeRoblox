@@ -17,13 +17,6 @@ const assets = [
     destination: 'native-window.win32-x64-msvc.node',
     sha256: '18f086daf0b555c3cecdf1ebd3b3514914be66c7102d5812567eb9f04cd2c0aa',
   },
-  {
-    spec: 'agentroam-cloudflared-win32-x64@0.2.0-preview.18',
-    source: path.join('package', 'vendor', 'cloudflared-windows-amd64.exe'),
-    destination: 'cloudflared-windows-amd64.exe',
-    // Matches the digest published on Cloudflare's official 2026.8.2 release.
-    sha256: 'c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5',
-  },
 ];
 
 function run(command, args, options = {}) {

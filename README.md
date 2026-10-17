@@ -46,7 +46,8 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 
 1. `Arena-Studio-Connecter-Portable-2.0.0-x64.exe` starten. Die portable App muss nicht installiert werden.
    Bei einem nicht signierten Entwicklungsbuild kann Windows SmartScreen einmalig nachfragen.
-2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch.
+2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch. Beim ersten Start
+   wird das SHA-256-verifizierte Cloudflared-Modul geladen; das kann je nach Verbindung kurz dauern.
 3. Roblox Studio nach der ersten Installation einmal neu starten.
 4. In Studio unter **Game Settings → Security → Allow HTTP Requests** aktivieren.
 5. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
@@ -204,28 +205,27 @@ npm install
 npm test                    # Unit- und End-to-End-Tests
 npm start                   # Bridge ohne Desktop-Fenster
 npm run desktop             # Electron-App im Entwicklungsmodus
-npm run dist:standalone     # vollständige Windows-x64-Einzeldatei-EXE
-npm run dist:download       # komprimierte Download-EXE für GitHub
+npm run dist:standalone     # direkte Windows-x64-Einzeldatei-EXE
+npm run dist:download       # geprüfte EXE nach downloads/ übernehmen
 npm run dist:win            # alternativ: Electron Installer + portable EXE
 ```
 
 `npm run dist:standalone` funktioniert auch auf Linux: Das Skript lädt die fest gepinnten
-npm-Pakete für Bun 1.4.3, das native Windows-WebView2-Modul und cloudflared 2026.8.2,
-verifiziert die eingebetteten PE-Dateien per SHA-256 und cross-kompiliert anschließend:
+npm-Pakete für Bun 1.4.3 und das native Windows-WebView2-Modul, verifiziert die PE-Datei
+per SHA-256 und cross-kompiliert anschließend eine direkt startbare EXE:
 
 ```text
 release/Arena-Studio-Connecter-Portable-2.0.0-x64.exe
 ```
 
-`npm run dist:download` verpackt diese Datei zusätzlich als kleinere, selbstentpackende
-Windows-EXE unter `downloads/`. Beim Start wird die vollständige App nur temporär entpackt,
-ausgeführt und danach wieder aufgeräumt; eine Installation ist weiterhin nicht nötig. Diese
-Datei ist das Ziel des Download-Buttons am Anfang dieser README.
+`npm run dist:download` übernimmt exakt diese Datei nach `downloads/` und erzeugt die
+SHA-256-Prüfsumme für den README-Download. Es gibt keinen vorgeschalteten Selbstentpacker.
+Cloudflared 2026.8.2 wird beim ersten App-Start aus der offiziellen Quelle oder dem gepinnten
+npm-Fallback geladen und vor der Ausführung gegen den fest hinterlegten SHA-256-Wert geprüft.
 
-Der alternative Electron-Build lädt ebenfalls cloudflared und erzeugt zusätzlich
-`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Die großen, unkomprimierten Build-Ausgaben
-unter `release/` sind gitignoriert; nur die für den README-Download optimierte EXE unter
-`downloads/` wird versioniert.
+Der alternative Electron-Build erzeugt zusätzlich
+`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Die temporären Build-Ausgaben unter `release/`
+sind gitignoriert; die direkt startbare EXE unter `downloads/` wird versioniert.
 
 ### Projektstruktur
 
@@ -242,7 +242,7 @@ standalone/
   main.js                 kompakter Bun-/WebView2-Host für die portable EXE
   windowsSettingsStore.js DPAPI- und Autostart-Integration ohne Electron
 downloads/
-  komprimierte, direkt startbare Windows-EXE für den README-Download
+  direkte Windows-EXE und Prüfsumme für den README-Download
 src/
   server.js               HTTP-Server, Routing und Auth
   core/                   Token, Session, Queue, Prompt, Logging

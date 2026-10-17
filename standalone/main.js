@@ -13,7 +13,6 @@ import pluginLua from '../roblox/ArenaStudioConnecter.server.lua' with { type: '
 import iconAsset from '../desktop/assets/icon.ico' with { type: 'file' };
 import iconPngAsset from '../desktop/assets/icon.png' with { type: 'file' };
 import nativeAddonAsset from '../.standalone-cache/native-window.win32-x64-msvc.node' with { type: 'file' };
-import cloudflaredAsset from '../.standalone-cache/cloudflared-windows-amd64.exe' with { type: 'file' };
 
 import { BridgeServer } from '../src/server.js';
 import { DEFAULTS } from '../src/core/config.js';
@@ -22,6 +21,7 @@ import { PluginDiscoveryServer } from '../desktop/discoveryServer.js';
 import { CloudflareTunnel } from '../desktop/cloudflareTunnel.js';
 import { installStudioPlugin } from '../desktop/pluginInstaller.js';
 import { WindowsSettingsStore } from './windowsSettingsStore.js';
+import { ensureCloudflared } from './cloudflaredBootstrap.js';
 
 const APP_VERSION = '2.0.0';
 const ARENA_URL = 'https://arena.ai/agent';
@@ -42,20 +42,12 @@ let dragState = null;
 let bridgeState = { status: 'starting', message: 'Lokale Bridge wird gestartet …' };
 let discoveryState = { status: 'starting', message: 'Studio-Erkennung wird gestartet …' };
 let pluginState = { status: 'starting', installed: false, message: 'Plugin wird installiert …' };
+let tunnelBootstrapState = { status: 'starting', url: null, message: 'Tunnel wird vorbereitet …' };
 
 fs.mkdirSync(runtimeDir, { recursive: true });
-const launcherCandidate = String(process.env.ASC_LAUNCHER_PATH ?? '').replace(/^"|"$/g, '');
-const launchExecutable = launcherCandidate
-  && path.isAbsolute(launcherCandidate)
-  && path.extname(launcherCandidate).toLowerCase() === '.exe'
-  && fs.existsSync(launcherCandidate)
-  ? launcherCandidate
-  : process.execPath;
 const settings = new WindowsSettingsStore({
   filePath: path.join(appData, 'settings.json'),
-  // A compressed download wrapper runs the app from a temporary directory.
-  // In that case autostart must point back to the persistent wrapper itself.
-  executablePath: launchExecutable,
+  executablePath: process.execPath,
 });
 
 function materialize(asset, destination, minimumSize = 1) {
@@ -70,7 +62,7 @@ function materialize(asset, destination, minimumSize = 1) {
 }
 
 const nativeAddonPath = materialize(nativeAddonAsset, path.join(runtimeDir, 'native-window.node'), 1_000_000);
-const cloudflaredPath = materialize(cloudflaredAsset, path.join(runtimeDir, 'cloudflared.exe'), 40_000_000);
+const cloudflaredPath = path.join(runtimeDir, 'cloudflared.exe');
 const iconPath = materialize(iconAsset, path.join(runtimeDir, 'icon.ico'), 10_000);
 
 function snapshot() {
@@ -83,7 +75,7 @@ function snapshot() {
       uptimeSeconds: bridge?.session.uptimeSeconds() ?? 0,
       tokenMasked: bridge?.session ? `${bridge.session.token.slice(0, 8)}••••${bridge.session.token.slice(-4)}` : null,
     },
-    tunnel: tunnel?.snapshot() ?? { status: 'starting', url: null, message: 'Tunnel wird gestartet …' },
+    tunnel: tunnel?.snapshot() ?? tunnelBootstrapState,
     plugin: { ...pluginState, connected: places.length > 0, connectedPlaces: places.length, discovery: discoveryState },
     places,
     settings: settings.publicState(),
@@ -137,7 +129,19 @@ function copyToClipboard(value) {
 }
 
 async function retryTunnel() {
-  if (!bridge?.url || !tunnel) throw new Error('Die lokale Bridge läuft noch nicht.');
+  if (!bridge?.url) throw new Error('Die lokale Bridge läuft noch nicht.');
+  if (!tunnel) {
+    try {
+      const executable = await ensureCloudflared({
+        destination: cloudflaredPath,
+        onState: (state) => { tunnelBootstrapState = state; },
+      });
+      tunnel = new CloudflareTunnel({ executable });
+    } catch (error) {
+      tunnelBootstrapState = { status: 'error', url: null, message: error.message };
+      throw error;
+    }
+  }
   await tunnel.start(bridge.url);
   return tunnel.snapshot();
 }
@@ -236,8 +240,9 @@ async function startServices() {
     discoveryState = { status: 'error', message: error.message };
   }
 
-  tunnel = new CloudflareTunnel({ executable: cloudflaredPath });
-  void tunnel.start(bridge.url);
+  void retryTunnel().catch((error) => {
+    tunnelBootstrapState = { status: 'error', url: null, message: error.message };
+  });
 }
 
 function handleWindowMessage(raw, sourceUrl) {
