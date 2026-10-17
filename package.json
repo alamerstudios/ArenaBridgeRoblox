@@ -15,7 +15,9 @@
     "print-config": "node src/index.js --print-config",
     "prepare:cloudflared": "node scripts/download-cloudflared.mjs",
     "dist:win": "npm run prepare:cloudflared && electron-builder --win nsis portable --x64",
-    "dist:portable": "npm run prepare:cloudflared && electron-builder --win portable --x64"
+    "dist:portable": "npm run prepare:cloudflared && electron-builder --win portable --x64",
+    "prepare:standalone": "node scripts/prepare-standalone.mjs",
+    "dist:standalone": "node scripts/build-standalone.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

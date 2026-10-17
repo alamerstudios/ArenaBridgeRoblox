@@ -58,6 +58,17 @@ test('plugin installer creates an rbxmx and only removes known legacy files', ()
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('plugin installer accepts embedded Luau for the single-file Windows build', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arena-embedded-plugin-'));
+  const result = installStudioPlugin({
+    source: 'print("embedded arena plugin")',
+    pluginsDirectory: root,
+  });
+  assert.equal(result.installed, true);
+  assert.match(fs.readFileSync(result.path, 'utf8'), /embedded arena plugin/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('loopback discovery gives the plugin the current in-memory session', async () => {
   const session = {
     id: 'session-1',

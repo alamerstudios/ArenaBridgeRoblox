@@ -26,9 +26,9 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 
 ## Windows-EXE verwenden
 
-1. `Arena-Studio-Connecter-Setup-2.0.0-x64.exe` starten und installieren.
-   Alternativ gibt es eine portable EXE.
-2. **Arena Studio Connecter** öffnen. Bridge, Tunnel und Plugin werden automatisch vorbereitet.
+1. `Arena-Studio-Connecter-Portable-2.0.0-x64.exe` starten. Die portable App muss nicht installiert werden.
+   Bei einem nicht signierten Entwicklungsbuild kann Windows SmartScreen einmalig nachfragen.
+2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch.
 3. Roblox Studio nach der ersten Installation einmal neu starten.
 4. In Studio unter **Game Settings → Security → Allow HTTP Requests** aktivieren.
 5. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
@@ -169,6 +169,7 @@ Vollständige Endpunkt- und Aktionsdetails stehen in [docs/API.md](docs/API.md).
 - Die Bridge begrenzt Requests und Request-Größen.
 - Open-Cloud-Keys werden mit Windows DPAPI verschlüsselt.
 - Das Electron-Fenster läuft mit `contextIsolation`, Sandbox und deaktivierter Node-Integration.
+- Die portable Einzeldatei-App nutzt ein isoliertes natives WebView2-Fenster; dessen Control-API bindet nur an eine zufällige Loopback-Adresse und akzeptiert ausschließlich den eigenen Origin.
 
 Der Session-Token erlaubt Codeausführung in der ausgewählten Studio-Place. Teile ihn nur mit
 dem Arena-Agent-Chat, für den er erzeugt wurde. App-Neustart oder `POST /token/rotate` macht
@@ -178,24 +179,27 @@ den alten Token sofort ungültig.
 
 ## Entwicklung
 
-Voraussetzungen: Node.js 18+ (für den Desktop-Build wird die in `package.json` angegebene
-Electron-Version verwendet).
+Voraussetzung: Node.js 18+.
 
 ```bash
 npm install
-npm test                 # Unit- und End-to-End-Tests
-npm start                # Bridge ohne Desktop-Fenster
-npm run desktop          # Electron-App im Entwicklungsmodus
-npm run dist:win         # Windows Installer + portable EXE
+npm test                    # Unit- und End-to-End-Tests
+npm start                   # Bridge ohne Desktop-Fenster
+npm run desktop             # Electron-App im Entwicklungsmodus
+npm run dist:standalone     # portable Windows-x64-Einzeldatei-EXE
+npm run dist:win            # alternativ: Electron Installer + portable EXE
 ```
 
-`npm run dist:win` lädt die festgelegte offizielle Windows-x64-Version von `cloudflared`
-herunter und bindet sie als Resource ein. Die Ergebnisse landen unter `release/`:
+`npm run dist:standalone` funktioniert auch auf Linux: Das Skript lädt die fest gepinnten
+npm-Pakete für Bun 1.4.3, das native Windows-WebView2-Modul und cloudflared 2026.8.2,
+verifiziert die eingebetteten PE-Dateien per SHA-256 und cross-kompiliert anschließend:
 
 ```text
-Arena-Studio-Connecter-Setup-2.0.0-x64.exe
-Arena-Studio-Connecter-Portable-2.0.0-x64.exe
+release/Arena-Studio-Connecter-Portable-2.0.0-x64.exe
 ```
+
+Der alternative Electron-Build lädt ebenfalls cloudflared und erzeugt zusätzlich
+`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Release-Binaries sind absichtlich gitignoriert.
 
 ### Projektstruktur
 
@@ -208,6 +212,9 @@ desktop/
   pluginInstaller.js      automatische RBXMX-Installation
   settingsStore.js        DPAPI-verschlüsselte Einstellungen
   renderer/               dunkelblaue animierte Desktop-UI
+standalone/
+  main.js                 kompakter Bun-/WebView2-Host für die portable EXE
+  windowsSettingsStore.js DPAPI- und Autostart-Integration ohne Electron
 src/
   server.js               HTTP-Server, Routing und Auth
   core/                   Token, Session, Queue, Prompt, Logging
@@ -215,7 +222,7 @@ src/
 roblox/
   ArenaStudioConnecter.server.lua
 scripts/
-  download-cloudflared.mjs, CLI, Mock-Studio, PowerShell-Launcher
+  Build-Vorbereitung, Cloudflared-Download, CLI, Mock-Studio, PowerShell-Launcher
 tests/
   Token-, Server-, Routing-, Prompt-, Discovery- und Installer-Tests
 ```

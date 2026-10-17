@@ -23,3 +23,4 @@ Thumbs.db
 # Desktop packaging artifacts and downloaded helper binary
 release/
 vendor/
+.standalone-cache/

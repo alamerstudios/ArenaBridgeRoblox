@@ -40,13 +40,13 @@ export function resolvePluginsDirectory(env = process.env, platform = process.pl
 }
 
 /** Install/update the local Roblox Studio plugin without touching user plugins. */
-export function installStudioPlugin({ sourcePath, pluginsDirectory = resolvePluginsDirectory() }) {
+export function installStudioPlugin({ sourcePath, source, pluginsDirectory = resolvePluginsDirectory() }) {
   if (!pluginsDirectory) {
     return { status: 'unsupported', installed: false, message: 'Automatische Plugin-Installation ist nur unter Windows verfügbar.' };
   }
 
   try {
-    const luaSource = fs.readFileSync(sourcePath, 'utf8');
+    const luaSource = typeof source === 'string' ? source : fs.readFileSync(sourcePath, 'utf8');
     const model = buildPluginModel(luaSource);
     fs.mkdirSync(pluginsDirectory, { recursive: true });
     const destination = path.join(pluginsDirectory, PLUGIN_FILE);

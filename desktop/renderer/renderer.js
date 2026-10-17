@@ -1,4 +1,45 @@
-const api = window.arenaDesktop;
+function nativeMessage(type, payload = {}) {
+  if (!window.ipc?.postMessage) return false;
+  window.ipc.postMessage(JSON.stringify({ type, ...payload }));
+  return true;
+}
+
+function createStandaloneApi() {
+  const request = async (path, body) => {
+    const response = await fetch(path, body === undefined ? undefined : {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    return result;
+  };
+  return {
+    getState: () => request('/api/state'),
+    onState: (callback) => {
+      let active = true;
+      const refresh = () => request('/api/state').then((state) => { if (active) callback(state); }).catch(() => {});
+      const timer = setInterval(refresh, 1_000);
+      refresh();
+      return () => { active = false; clearInterval(timer); };
+    },
+    copyPrompt: (clientId) => request('/api/copy-prompt', { clientId }),
+    openArena: () => request('/api/open-arena', {}),
+    retryTunnel: () => request('/api/retry-tunnel', {}),
+    reinstallPlugin: () => request('/api/reinstall-plugin', {}),
+    showPluginFile: () => request('/api/show-plugin', {}),
+    saveApiKey: (value) => request('/api/save-api-key', { value }),
+    clearApiKey: () => request('/api/clear-api-key', {}),
+    setLaunchAtLogin: (enabled) => request('/api/launch-at-login', { enabled }),
+    minimize: () => nativeMessage('window:minimize') || request('/api/window/minimize', {}),
+    toggleMaximize: () => nativeMessage('window:toggle-maximize') || request('/api/window/maximize', {}),
+    close: () => nativeMessage('window:close') || request('/api/window/close', {}),
+  };
+}
+
+const isStandalone = location.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(location.hostname);
+const api = window.arenaDesktop || (isStandalone ? createStandaloneApi() : null);
 const byId = (id) => document.getElementById(id);
 
 let currentState = null;
@@ -266,6 +307,30 @@ function wireEvents() {
   byId('window-minimize').addEventListener('click', () => api.minimize());
   byId('window-maximize').addEventListener('click', () => api.toggleMaximize());
   byId('window-close').addEventListener('click', () => api.close());
+
+  // Native WebView builds do not understand Electron's -webkit-app-region.
+  // Forward pointer coordinates to the tiny native host for smooth dragging.
+  if (window.ipc?.postMessage) {
+    const dragRegion = document.querySelector('.titlebar-drag');
+    let dragging = false;
+    dragRegion.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragging = true;
+      dragRegion.setPointerCapture?.(event.pointerId);
+      nativeMessage('window:drag-start', { screenX: event.screenX, screenY: event.screenY });
+    });
+    dragRegion.addEventListener('pointermove', (event) => {
+      if (dragging) nativeMessage('window:drag-move', { screenX: event.screenX, screenY: event.screenY });
+    });
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      nativeMessage('window:drag-end');
+    };
+    dragRegion.addEventListener('pointerup', endDrag);
+    dragRegion.addEventListener('pointercancel', endDrag);
+  }
+
   byId('open-arena').addEventListener('click', async () => {
     try { await api.openArena(); } catch (error) { showToast('Browser konnte nicht geöffnet werden', error.message, 'error'); }
   });
@@ -318,7 +383,7 @@ function wireEvents() {
 }
 
 const demoState = {
-  app: { version: '1.1.0' },
+  app: { version: '2.0.0' },
   bridge: { status: 'online', message: 'Lokale Bridge läuft.' },
   tunnel: { status: 'online', url: 'https://studio-arena-demo.trycloudflare.com', message: 'Cloudflare-Tunnel ist online.' },
   plugin: { status: 'installed', installed: true, connected: true, connectedPlaces: 2, message: 'Plugin ist installiert und aktuell.', path: 'C:\\Users\\Arena\\AppData\\Local\\Roblox\\Plugins\\ArenaStudioConnecter.rbxmx' },
