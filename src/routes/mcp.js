@@ -97,14 +97,14 @@ export function createMcpRoutes(ctx) {
     inputSchema: TOOL_SCHEMAS[a.action] ?? { type: 'object', properties: {} },
   }));
 
-  async function handleMethod(method, params, id) {
+  async function handleMethod(method, params, id, targetClientId = null) {
     switch (method) {
       case 'initialize':
         return rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, logging: {} },
-          serverInfo: { name: 'nexusai-bridge', version: '1.0.0' },
-          instructions: 'Tools run inside the connected Roblox Studio session. Start the NexusAI plugin in Studio first.',
+          serverInfo: { name: 'arena-studio-connecter', version: '2.0.0' },
+          instructions: 'Tools run inside the connected Roblox Studio session. Start the Arena Studio Connecter plugin in Studio first.',
         });
 
       case 'notifications/initialized':
@@ -123,8 +123,24 @@ export function createMcpRoutes(ctx) {
           return rpcError(id, -32602, `Unknown tool: ${name}`, { available: tools.map((t) => t.name) });
         }
 
+        const activeClients = session.activeClients();
+        if (targetClientId && !activeClients.some((client) => client.id === targetClientId)) {
+          return rpcError(id, -32004, `Studio client is offline: ${targetClientId}`);
+        }
+        if (!targetClientId && activeClients.length > 1) {
+          return rpcError(id, -32602, 'Multiple Studio Places are open. Send X-Studio-Client-Id to select one.', {
+            clients: activeClients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
+          });
+        }
+
         session.stats.commandsQueued += 1;
-        const { promise } = queue.enqueue({ action: name, params: args, source: 'mcp', timeoutMs: config.commandTimeoutMs });
+        const { promise } = queue.enqueue({
+          action: name,
+          params: args,
+          source: 'mcp',
+          targetClientId,
+          timeoutMs: config.commandTimeoutMs,
+        });
         const done = await promise;
         if (done.ok) session.stats.commandsCompleted += 1; else session.stats.commandsFailed += 1;
 
@@ -146,19 +162,19 @@ export function createMcpRoutes(ctx) {
       case 'resources/list':
         return rpcResult(id, {
           resources: [
-            { uri: 'nexusai://status', name: 'Bridge status', description: 'Live bridge status JSON', mimeType: 'application/json' },
-            { uri: 'nexusai://logs', name: 'Bridge logs', description: 'Recent bridge log entries', mimeType: 'application/json' },
+            { uri: 'arena-studio://status', name: 'Bridge status', description: 'Live bridge status JSON', mimeType: 'application/json' },
+            { uri: 'arena-studio://logs', name: 'Bridge logs', description: 'Recent bridge log entries', mimeType: 'application/json' },
           ],
         });
 
       case 'resources/read': {
         const uri = params?.uri;
-        if (uri === 'nexusai://status') {
+        if (uri === 'arena-studio://status') {
           return rpcResult(id, {
             contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(session.toStatus(), null, 2) }],
           });
         }
-        if (uri === 'nexusai://logs') {
+        if (uri === 'arena-studio://logs') {
           return rpcResult(id, {
             contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(logger.recent(100), null, 2) }],
           });
@@ -179,7 +195,7 @@ export function createMcpRoutes(ctx) {
         protocol: 'jsonrpc-2.0',
         protocolVersion: PROTOCOL_VERSION,
         transport: 'http',
-        serverInfo: { name: 'nexusai-bridge', version: '1.0.0' },
+        serverInfo: { name: 'arena-studio-connecter', version: '2.0.0' },
         tools: tools.map((t) => ({ name: t.name, description: t.description })),
         usage: 'POST JSON-RPC 2.0 requests to this same URL with the bridge token in the Authorization header.',
       });
@@ -206,7 +222,8 @@ export function createMcpRoutes(ctx) {
         }
         logger.debug(`mcp ${request.method}`, { id: request.id ?? null });
         try {
-          const response = await handleMethod(request.method, request.params, request.id ?? null);
+          const targetClientId = req.headers['x-studio-client-id'] ? String(req.headers['x-studio-client-id']) : null;
+          const response = await handleMethod(request.method, request.params, request.id ?? null, targetClientId);
           if (response !== null) responses.push(response);
         } catch (err) {
           logger.error(`mcp handler error: ${err.message}`, { method: request.method });

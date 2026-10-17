@@ -26,8 +26,8 @@ function parseArgs(argv) {
 }
 
 function resolveConnection(options) {
-  const url = options.url ?? process.env.NEXUSAI_BRIDGE_URL;
-  const token = options.token ?? process.env.NEXUSAI_BRIDGE_TOKEN;
+  const url = options.url ?? process.env.ARENA_STUDIO_BRIDGE_URL;
+  const token = options.token ?? process.env.ARENA_STUDIO_BRIDGE_TOKEN;
   if (url && token) return { url: url.replace(/\/+$/, ''), token };
   const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
   return { url: String(data.url).replace(/\/+$/, ''), token: data.token };

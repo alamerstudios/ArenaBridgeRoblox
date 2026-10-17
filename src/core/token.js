@@ -13,14 +13,14 @@ const DEFAULT_BYTES = 24; // 24 bytes -> 32 base64url chars -> 192 bits of entro
 
 /**
  * Create a new random token.
- * Format: nxs_<base64url>  (prefix makes it greppable in logs/issues)
+ * Format: asc_<base64url>  (prefix makes it greppable in logs/issues)
  *
  * @param {{ bytes?: number, prefix?: string }} [options]
  * @returns {string}
  */
 export function generateToken(options = {}) {
   const bytes = Number.isInteger(options.bytes) && options.bytes >= 16 ? options.bytes : DEFAULT_BYTES;
-  const prefix = options.prefix ?? 'nxs';
+  const prefix = options.prefix ?? 'asc';
   const raw = crypto.randomBytes(bytes).toString('base64url');
   return `${prefix}_${raw}`;
 }
@@ -53,7 +53,7 @@ export function safeCompare(expected, provided) {
 }
 
 /**
- * Mask a token for log output: nxs_AbCd...WxYz
+ * Mask a token for log output: asc_AbCd...WxYz
  * @param {string} token
  * @returns {string}
  */

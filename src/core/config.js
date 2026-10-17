@@ -1,6 +1,6 @@
 /**
  * Configuration resolution: defaults < environment variables < CLI flags.
- * Note: NEXUSAI_TOKEN is intentionally NOT supported as a way to pin a static
+ * Note: ARENA_STUDIO_TOKEN is intentionally NOT supported as a way to pin a static
  * token for normal use. The bridge always generates a fresh token per start.
  */
 
@@ -45,16 +45,16 @@ export function loadConfig(argv = [], env = process.env) {
   const config = { ...DEFAULTS };
 
   // ---- environment -------------------------------------------------------
-  config.host = env.NEXUSAI_HOST || config.host;
-  config.port = parseInteger(env.NEXUSAI_PORT, config.port);
-  config.logLevel = env.NEXUSAI_LOG_LEVEL || config.logLevel;
-  config.logFile = env.NEXUSAI_LOG_FILE ?? config.logFile;
-  config.jsonLogs = parseBool(env.NEXUSAI_JSON_LOGS, config.jsonLogs);
-  config.dashboard = parseBool(env.NEXUSAI_DASHBOARD, config.dashboard);
-  config.openBrowser = parseBool(env.NEXUSAI_OPEN_BROWSER, config.openBrowser);
-  config.commandTimeoutMs = parseInteger(env.NEXUSAI_COMMAND_TIMEOUT_MS, config.commandTimeoutMs);
-  config.sessionFile = env.NEXUSAI_SESSION_FILE || config.sessionFile;
-  config.tokenBytes = parseInteger(env.NEXUSAI_TOKEN_BYTES, config.tokenBytes);
+  config.host = env.ARENA_STUDIO_HOST || config.host;
+  config.port = parseInteger(env.ARENA_STUDIO_PORT, config.port);
+  config.logLevel = env.ARENA_STUDIO_LOG_LEVEL || config.logLevel;
+  config.logFile = env.ARENA_STUDIO_LOG_FILE ?? config.logFile;
+  config.jsonLogs = parseBool(env.ARENA_STUDIO_JSON_LOGS, config.jsonLogs);
+  config.dashboard = parseBool(env.ARENA_STUDIO_DASHBOARD, config.dashboard);
+  config.openBrowser = parseBool(env.ARENA_STUDIO_OPEN_BROWSER, config.openBrowser);
+  config.commandTimeoutMs = parseInteger(env.ARENA_STUDIO_COMMAND_TIMEOUT_MS, config.commandTimeoutMs);
+  config.sessionFile = env.ARENA_STUDIO_SESSION_FILE || config.sessionFile;
+  config.tokenBytes = parseInteger(env.ARENA_STUDIO_TOKEN_BYTES, config.tokenBytes);
 
   // ---- CLI flags ---------------------------------------------------------
   const flags = { help: false, version: false, printConfig: false };
@@ -95,7 +95,7 @@ export function loadConfig(argv = [], env = process.env) {
 }
 
 export const HELP_TEXT = `
-NexusAI Bridge - local bridge for Roblox Studio
+Arena Studio Connecter - local bridge for Roblox Studio
 
 Usage: node src/index.js [options]
 

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    NexusAI Bridge - PowerShell Launcher.
+    Arena Studio Connecter - PowerShell Launcher.
 
 .DESCRIPTION
     Startet die Node.js Bridge, liest die dynamisch erzeugte URL und den
@@ -8,8 +8,8 @@
     hervorgehoben an. Der Token aendert sich bei jedem Start; er wird niemals
     im Code hinterlegt.
 
-    Zusaetzlich werden url + token in $env:NEXUSAI_BRIDGE_URL /
-    $env:NEXUSAI_BRIDGE_TOKEN gesetzt und - falls moeglich - der Token in die
+    Zusaetzlich werden url + token in $env:ARENA_STUDIO_BRIDGE_URL /
+    $env:ARENA_STUDIO_BRIDGE_TOKEN gesetzt und - falls moeglich - der Token in die
     Zwischenablage kopiert.
 
 .PARAMETER Port
@@ -52,7 +52,7 @@ function Write-Banner {
 
     Write-Host ''
     Write-Host $Line -ForegroundColor DarkCyan
-    Write-Host 'NexusAI Bridge: LAEUFT' -ForegroundColor Green
+    Write-Host 'Arena Studio Connecter: LAEUFT' -ForegroundColor Green
     Write-Host $Line -ForegroundColor DarkCyan
     Write-Host '---BRIDGE---' -ForegroundColor DarkGray
     Write-Host 'url: '   -NoNewline -ForegroundColor Gray; Write-Host $Url   -ForegroundColor Cyan
@@ -81,7 +81,7 @@ if ($NoDashboard) { $argsList += '--no-dashboard' }
 if ($Extra)       { $argsList += $Extra }
 
 Write-Host ''
-Write-Host "NexusAI Bridge wird gestartet (Node $nodeVersion)..." -ForegroundColor DarkGray
+Write-Host "Arena Studio Connecter wird gestartet (Node $nodeVersion)..." -ForegroundColor DarkGray
 Write-Host 'Der Token wird jetzt neu generiert - er gilt nur fuer diese Sitzung.' -ForegroundColor DarkGray
 
 # --- Bridge starten und Ausgabe streamen -----------------------------------
@@ -105,8 +105,8 @@ try {
                 $bannerShown = $true
 
                 # Fuer weitere Tools in dieser Sitzung verfuegbar machen.
-                $env:NEXUSAI_BRIDGE_URL   = $bridgeUrl
-                $env:NEXUSAI_BRIDGE_TOKEN = $bridgeToken
+                $env:ARENA_STUDIO_BRIDGE_URL   = $bridgeUrl
+                $env:ARENA_STUDIO_BRIDGE_TOKEN = $bridgeToken
 
                 try {
                     Set-Clipboard -Value $bridgeToken -ErrorAction Stop
@@ -123,10 +123,11 @@ try {
 
                 Write-Host ''
                 Write-Host 'Naechste Schritte:' -ForegroundColor White
-                Write-Host '  1. Roblox Studio oeffnen und das NexusAI-Plugin starten (roblox/NexusAIPlugin.server.lua)' -ForegroundColor Gray
-                Write-Host '  2. Im Plugin-Fenster url + token aus der Box oben eintragen' -ForegroundColor Gray
-                Write-Host '  3. Status pruefen:' -ForegroundColor Gray
-                Write-Host "     Invoke-RestMethod -Uri '$bridgeUrl/status' -Headers @{ Authorization = 'Bearer ' + `$env:NEXUSAI_BRIDGE_TOKEN }" -ForegroundColor DarkGray
+                Write-Host '  1. Roblox Studio nach der ersten Plugin-Installation neu starten' -ForegroundColor Gray
+                Write-Host '  2. Game Settings -> Security -> Allow HTTP Requests aktivieren' -ForegroundColor Gray
+                Write-Host '  3. Eine Place oeffnen - das Plugin verbindet sich automatisch' -ForegroundColor Gray
+                Write-Host '  4. Status pruefen:' -ForegroundColor Gray
+                Write-Host "     Invoke-RestMethod -Uri '$bridgeUrl/status' -Headers @{ Authorization = 'Bearer ' + `$env:ARENA_STUDIO_BRIDGE_TOKEN }" -ForegroundColor DarkGray
                 Write-Host ''
                 Write-Host 'Beenden mit Strg+C.' -ForegroundColor DarkGray
                 Write-Host $Line -ForegroundColor DarkCyan
@@ -148,9 +149,9 @@ catch {
     exit 1
 }
 finally {
-    $env:NEXUSAI_BRIDGE_TOKEN = $null
+    $env:ARENA_STUDIO_BRIDGE_TOKEN = $null
 }
 
 Write-Host ''
-Write-Host 'NexusAI Bridge wurde beendet.' -ForegroundColor DarkGray
+Write-Host 'Arena Studio Connecter wurde beendet.' -ForegroundColor DarkGray
 exit $LASTEXITCODE

@@ -1,276 +1,224 @@
-# NexusAI Bridge
+# Arena Studio Connecter
 
-Lokale Bridge zwischen KI-Tooling und **Roblox Studio**.
-Sie stellt eine HTTP-API plus einen **MCP-Endpoint** (JSON-RPC 2.0) bereit, über die Befehle
-direkt in einer laufenden Studio-Session ausgeführt werden — Luau ausführen, Instanzen lesen
-und anlegen, Skript-Quelltext ändern, Selection steuern und mehr.
+Eine Windows-Desktop-App, die **Arena Agent** sicher mit deinen aktuell geöffneten
+**Roblox-Studio-Places** verbindet.
 
-> **Jeder Start erzeugt einen neuen Token.**
-> Es ist **kein Token im Code hinterlegt**. Der Token entsteht bei jedem Bridge-Start neu
-> (192 Bit Entropie aus `crypto.randomBytes`), lebt nur im Speicher und in einer
-> gitignorierten Session-Datei, und wird bei **jedem** Request geprüft.
+Die App startet die lokale HTTP/MCP-Bridge, installiert das Studio-Plugin automatisch,
+erstellt einen temporären Cloudflare-HTTPS-Tunnel und erzeugt für jede offene Place einen
+fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** eingetragen werden.
 
----
+## Highlights
 
-## Schnellstart
-
-### Windows
-
-```bat
-start-bridge.bat
-```
-
-### Alle Plattformen
-
-```bash
-npm start
-```
-
-Die Bridge gibt beim Start diese Box aus — `url` und `token` sind bei jedem Start anders:
-
-```
-============================================================
-NexusAI Bridge: LAEUFT
-============================================================
----BRIDGE---
-url: http://127.0.0.1:8787
-token: nxs_BEISPIEL_bei_jedem_Start_anders
----END---
-
-Dashboard : http://127.0.0.1:8787/dashboard?token=nxs_...
-Status    : http://127.0.0.1:8787/status   (Header: Authorization: Bearer <token>)
-MCP       : http://127.0.0.1:8787/mcp      (JSON-RPC 2.0)
-Session   : .runtime/session.json
-Logfile   : logs/bridge.log
-
-Der Token wird bei jedem Start neu erzeugt. Stop: Strg+C
-============================================================
-```
-
-Voraussetzung: **Node.js 18+**. Keine externen Abhängigkeiten — `npm install` ist nicht nötig.
+- Dunkelblaue native Desktop-Oberfläche mit Animationen
+- Alle aktuell verbundenen Studio-Places in einer Übersicht
+- Aktiver Roblox-Studio-Account unten links
+- Ein eigener **„Prompt kopieren“**-Button pro Place
+- Temporärer Cloudflare Quick Tunnel ohne manuelle Konfiguration
+- Session-Token ausschließlich im Prompt/Header, **nie in der Guide-URL**
+- Lila **„Arena AI öffnen“**-Button für <https://arena.ai/agent>
+- Automatische Plugin-Installation nach `%LOCALAPPDATA%\Roblox\Plugins`
+- Plugin verbindet sich automatisch über einen separaten Loopback-Discovery-Port
+- Mehrere offene Places werden über `targetClientId` sicher getrennt
+- Optionaler Open-Cloud-API-Key, verschlüsselt mit Windows DPAPI gespeichert
+- HTTP-API plus MCP-kompatibler JSON-RPC-Endpoint
 
 ---
 
-## Wie der Token funktioniert
+## Windows-EXE verwenden
 
-| | |
-|---|---|
-| **Erzeugung** | `crypto.randomBytes(24)` → base64url, Präfix `nxs_` — bei jedem Start neu |
-| **Format** | `nxs_<32 Zeichen base64url>`, 192 Bit Entropie |
-| **Gültigkeit** | Nur für die laufende Session. Bridge neu starten = neuer Token |
-| **Speicherung** | Nur im RAM + `.runtime/session.json` (gitignored, Dateirechte `0600`) |
-| **Prüfung** | Bei **jedem** Request, konstant-zeitlich (SHA-256 + `timingSafeEqual`) |
-| **In Logs** | Immer maskiert: `nxs_jr_l...1RAj` — der Klartext-Token kann nicht ins Log gelangen |
-| **Rotation** | `POST /token/rotate` erzeugt jederzeit einen neuen; der alte wird sofort ungültig |
-| **Brute-Force** | Nach 20 Fehlversuchen pro IP `429`; zusätzlich 600 Requests/Minute Limit |
+1. `Arena-Studio-Connecter-Setup-2.0.0-x64.exe` starten und installieren.
+   Alternativ gibt es eine portable EXE.
+2. **Arena Studio Connecter** öffnen. Bridge, Tunnel und Plugin werden automatisch vorbereitet.
+3. Roblox Studio nach der ersten Installation einmal neu starten.
+4. In Studio unter **Game Settings → Security → Allow HTTP Requests** aktivieren.
+5. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
+6. Bei der gewünschten Place auf **Prompt kopieren** klicken.
+7. Unten links **Arena AI öffnen** wählen und den Prompt in einen neuen Agent-Chat einfügen.
 
-Ein Regressionstest (`tests/token.test.js`) scannt den kompletten Quellbaum und schlägt fehl,
-sobald irgendwo ein Token-Literal auftaucht.
+Das Studio-Plugin zeigt nur den Verbindungsstatus. Es gibt dort bewusst keine Felder für URL,
+Token oder API-Key.
 
-### Token an Clients übergeben
+### Was im kopierten Prompt steht
 
-Vier gleichwertige Wege:
+Der Prompt enthält:
 
-```bash
-curl -H "Authorization: Bearer $TOKEN"   http://127.0.0.1:8787/status
-curl -H "X-Bridge-Token: $TOKEN"         http://127.0.0.1:8787/status   # Roblox-freundlich
-curl -H "X-Api-Key: $TOKEN"              http://127.0.0.1:8787/status
-curl "http://127.0.0.1:8787/status?token=$TOKEN"                        # Browser-freundlich
+- die temporäre `https://…trycloudflare.com`-Adresse,
+- den nur für diesen App-Start gültigen Bridge-Token,
+- die eindeutige Studio-Client-ID der gewählten Place,
+- Place-/Universe-/Account-Metadaten,
+- einen Link auf `/agent/guide?clientId=…`,
+- klare Anweisungen zur Authentifizierung und sicheren Zielauswahl.
+
+Der Token wird nicht an die URL gehängt. Arena Agent sendet ihn nur so:
+
+```text
+Authorization: Bearer <SESSION_TOKEN>
 ```
 
-Skripte müssen den Token **nicht** abtippen — die laufende Bridge schreibt ihn nach
-`.runtime/session.json`, und die mitgelieferte CLI liest ihn von dort automatisch.
+Die Guide-URL selbst ist geheimnisfrei. Schreibende API-Aufrufe bleiben ohne gültigen
+Bearer-Token gesperrt.
 
 ---
 
-## Roblox Studio verbinden
+## Automatisches Roblox-Plugin
 
-1. **HTTP freischalten**: In Studio → *Game Settings → Security → „Allow HTTP Requests"* aktivieren.
-2. **Plugin installieren**: `roblox/NexusAIPlugin.server.lua` nach
-   `%LOCALAPPDATA%\Roblox\Plugins\` kopieren (oder in Studio Rechtsklick auf das Script →
-   *„Save as Local Plugin"*). Studio neu starten.
-3. **Verbinden**: Toolbar → **NexusAI Bridge**. `url` und `token` aus der `---BRIDGE---` Box
-   eintragen und auf *Verbinden* klicken. Der Status wechselt auf grün.
+Bei jedem App-Start wird aus
+[`roblox/ArenaStudioConnecter.server.lua`](roblox/ArenaStudioConnecter.server.lua) ein lokales
+`ArenaStudioConnecter.rbxmx` erzeugt und in den Roblox-Plugin-Ordner kopiert. Eine alte,
+von dieser Repo stammende Vorgänger-Plugin-Datei wird entfernt; andere lokale Plugins werden
+nicht verändert.
 
-Das Plugin merkt sich die URL, **nicht** aber den Token — der ändert sich ja bei jedem Start.
+Das Plugin fragt die aktuelle lokale Bridge-Session über
+`http://127.0.0.1:32192/v1/session` ab. Dieser Discovery-Port:
 
-### Architektur
+- bindet ausschließlich an `127.0.0.1`,
+- wird **nicht** durch Cloudflare veröffentlicht,
+- liefert den dynamischen Token nur an lokale Prozesse,
+- speichert den Token nicht in Roblox Studio.
 
-Roblox Studio kann keine eingehenden Verbindungen annehmen, deshalb pollt das Plugin die Bridge:
-
-```
-  KI-Client / CLI / Dashboard
-            │  POST /command   (Authorization: Bearer <token>)
-            ▼
-     ┌──────────────────┐
-     │  NexusAI Bridge  │   Token-Prüfung → Queue → Logging
-     └──────────────────┘
-            ▲  GET /studio/poll     (Long-Poll, ~25 s)
-            │  POST /studio/result
-     Roblox Studio Plugin
-```
+Danach meldet das Plugin Place-ID, Universe-ID, Place-Name und den Studio-Account an und
+pollt gezielt nach Befehlen für diese Place.
 
 ---
 
-## Web-Dashboard
+## Open Cloud API Key
 
-`http://127.0.0.1:8787/dashboard` — die Startausgabe enthält einen fertigen Link mit Token.
+Der Key ist optional. Die Live-Verbindung zu einer geöffneten Studio-Place funktioniert
+ohne Open Cloud.
 
-Zeigt Live-Status, Statistiken, verbundene Clients, Befehlsverlauf und Logs; erlaubt
-Befehle direkt an Studio zu senden und den Token per Klick zu rotieren.
-Das Dashboard-HTML enthält **keinen** Token — er kommt aus dem `?token=`-Parameter oder
-dem Eingabefeld und liegt nur im `sessionStorage`. Der Parameter wird nach dem Verbinden
-sofort aus der Adressleiste entfernt.
+Wenn ein Key für zusätzliche Publishing-Abläufe hinterlegt wird, sollte er in Roblox Creator
+Dashboard minimal berechtigt sein:
+
+1. Nur die wirklich benötigte Experience auswählen.
+2. **Place Publishing → Write** nur aktivieren, wenn Open-Cloud-Publishing benötigt wird.
+3. Keine Data-Store-, Messaging-, Memory-Store- oder Asset-Rechte vergeben, solange die
+   jeweilige Aufgabe sie nicht ausdrücklich braucht.
+
+Die Desktop-App speichert den Key über Windows DPAPI verschlüsselt. Er wird weder in Logs
+noch in die Cloudflare-URL oder den kopierten Arena-Prompt geschrieben.
 
 ---
 
-## CLI
+## Architektur
 
-Die CLI findet URL und Token automatisch über `.runtime/session.json`:
-
-```bash
-node scripts/bridge-cli.js status
-node scripts/bridge-cli.js ping
-node scripts/bridge-cli.js actions
-node scripts/bridge-cli.js logs --limit 50 --level warn
-node scripts/bridge-cli.js command run_luau '{"code":"return workspace:GetChildren()"}'
-node scripts/bridge-cli.js command create_instance '{"className":"Part","parent":"game.Workspace"}'
-node scripts/bridge-cli.js mcp tools/list
-node scripts/bridge-cli.js rotate
+```text
+┌──────────────────────── Arena Studio Connecter.exe ────────────────────────┐
+│                                                                            │
+│  Desktop UI ── Prompt/Status ── Local Bridge ── Cloudflare Quick Tunnel    │
+│                                  127.0.0.1:<dynamisch>      │               │
+│                                             ▲              │ HTTPS         │
+│  Plugin Discovery 127.0.0.1:32192 ──────────┘              ▼               │
+└────────────────────────────────────────────────────── Arena Agent ─────────┘
+                         ▲
+                         │ Long Poll + Bearer Token
+                         │
+                  Roblox Studio Plugin
+                  (eine Client-ID pro Place)
 ```
 
-Explizit geht es auch: `--url http://127.0.0.1:8787 --token nxs_...`
-oder über `NEXUSAI_BRIDGE_URL` / `NEXUSAI_BRIDGE_TOKEN`.
-Der PowerShell-Launcher setzt diese Variablen automatisch und kopiert den Token in die Zwischenablage.
+Roblox Studio nimmt keine eingehenden Verbindungen an. Deshalb pollt das Plugin die lokale
+Bridge. Arena Agent erreicht dieselbe Bridge über den temporären Tunnel. Befehle enthalten
+eine `targetClientId`, damit bei mehreren Studio-Fenstern nie die falsche Place geändert wird.
 
 ---
 
-## Endpoints
+## API für Arena Agent
 
 | Methode | Pfad | Token | Zweck |
-|---------|------|:-----:|-------|
-| GET | `/health` | – | Öffentlicher Liveness-Check |
-| GET | `/status` | ✓ | Status, Statistik, Clients, Queue |
-| GET | `/ping` | ✓ | Authentifizierter Ping |
-| GET | `/actions` | ✓ | Katalog der Studio-Aktionen |
-| POST | `/command` | ✓ | Befehl an Studio senden und auf Ergebnis warten |
-| GET | `/command/:id` | ✓ | Befehl nachschlagen |
-| GET | `/queue` | ✓ | Warteschlange |
-| GET | `/logs` | ✓ | Letzte Logeinträge |
-| POST | `/token/rotate` | ✓ | Neuen Token erzeugen |
-| GET/POST | `/mcp` | ✓ | MCP / JSON-RPC 2.0 |
+|---|---|:---:|---|
+| GET | `/health` | – | Liveness-Check |
+| GET | `/agent/guide?clientId=…` | – | Secret-freie Agent-Anleitung |
+| GET | `/status` | ✓ | Bridge, Statistik und verbundene Places |
+| GET | `/actions` | ✓ | Verfügbare Studio-Aktionen |
+| POST | `/command` | ✓ | Befehl gezielt an eine Place senden |
+| GET | `/command/:id` | ✓ | Asynchronen Befehl nachschlagen |
+| GET | `/queue` | ✓ | Queue-Zustand |
+| GET | `/logs` | ✓ | Bereinigte Bridge-Logs |
+| POST | `/token/rotate` | ✓ | Session-Token sofort austauschen |
+| GET/POST | `/mcp` | ✓ | MCP-kompatibles JSON-RPC 2.0 |
 | POST | `/studio/handshake` | ✓ | Plugin-Anmeldung |
-| GET | `/studio/poll` | ✓ | Long-Poll des Plugins |
-| POST | `/studio/result` | ✓ | Ergebnis vom Plugin |
-| POST | `/studio/log` | ✓ | Studio-Output ins Bridge-Log |
-| GET | `/dashboard` | – | Web-Dashboard (Token in der UI) |
+| GET | `/studio/poll` | ✓ | Plugin-Long-Poll |
+| POST | `/studio/result` | ✓ | Plugin-Ergebnis |
 
-Vollständige Details inkl. Parametern, Fehlercodes und Roblox-Typ-Serialisierung: **[docs/API.md](docs/API.md)**.
-
-### Beispiel
+Beispiel für eine gezielte Place:
 
 ```bash
-TOKEN="nxs_..."   # aus der ---BRIDGE--- Box
-
-curl -X POST http://127.0.0.1:8787/command \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"action":"run_luau","params":{"code":"return 1+1"}}'
+curl -X POST "https://DEIN-TUNNEL.trycloudflare.com/command" \
+  -H "Authorization: Bearer <SESSION_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "list_instances",
+    "params": { "path": "game.Workspace", "depth": 2 },
+    "targetClientId": "CLIENT_ID_AUS_DEM_PROMPT"
+  }'
 ```
+
+Vollständige Endpunkt- und Aktionsdetails stehen in [docs/API.md](docs/API.md).
 
 ---
 
-## MCP-Integration
+## Sicherheit
 
-Die Bridge spricht JSON-RPC 2.0 nach MCP-Form (`initialize`, `tools/list`, `tools/call`,
-`resources/list`, `resources/read`). Alle 13 Studio-Aktionen stehen als MCP-Tools mit
-JSON-Schema zur Verfügung.
+- Bei jedem Start entsteht ein neuer kryptografischer Token mit 192 Bit Entropie.
+- Session-Token liegen nur im RAM und in einer lokalen, gitignorierten Session-Datei.
+- Logs maskieren bekannte Secrets.
+- Der öffentliche Tunnel zeigt keine Desktop-Oberfläche und keine Discovery-Route.
+- Alle Steuer-, MCP- und Studio-Endpunkte verlangen den Token.
+- Der Guide enthält keinen Token.
+- Nach 20 ungültigen Authentifizierungsversuchen wird der Client blockiert.
+- Die Bridge begrenzt Requests und Request-Größen.
+- Open-Cloud-Keys werden mit Windows DPAPI verschlüsselt.
+- Das Electron-Fenster läuft mit `contextIsolation`, Sandbox und deaktivierter Node-Integration.
 
-```bash
-curl -X POST http://127.0.0.1:8787/mcp \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
-       "params":{"name":"get_place_info","arguments":{}}}'
-```
-
-Da der Token pro Start wechselt, muss die Konfiguration des MCP-Clients den Token aus
-`.runtime/session.json` beziehen statt ihn fest zu hinterlegen.
-
----
-
-## Optionen
-
-```
--p, --port <n>            Port (Standard: 0 = freier Port wird automatisch gewählt)
-    --host <addr>         Bind-Adresse (Standard: 127.0.0.1)
-    --log-level <level>   debug | info | warn | error | silent
-    --log-file <path>     Logdatei (Standard: logs/bridge.log)
-    --no-log-file         Dateilogging aus
-    --json-logs           Logs als NDJSON
-    --no-dashboard        Dashboard deaktivieren
-    --open                Dashboard im Browser öffnen
-    --token-bytes <n>     Token-Entropie in Bytes, 16–64 (Standard: 24)
-    --command-timeout <ms> Max. Wartezeit auf Studio (Standard: 30000)
-    --print-config        Konfiguration ausgeben und beenden
--h, --help / -v, --version
-```
-
-Alles auch per Umgebungsvariable: `NEXUSAI_PORT`, `NEXUSAI_HOST`, `NEXUSAI_LOG_LEVEL`,
-`NEXUSAI_LOG_FILE`, `NEXUSAI_DASHBOARD`, `NEXUSAI_TOKEN_BYTES`, …
-
-PowerShell-Launcher:
-
-```powershell
-.\scripts\start-bridge.ps1 -Port 8787 -LogLevel debug -Open
-```
+Der Session-Token erlaubt Codeausführung in der ausgewählten Studio-Place. Teile ihn nur mit
+dem Arena-Agent-Chat, für den er erzeugt wurde. App-Neustart oder `POST /token/rotate` macht
+den alten Token sofort ungültig.
 
 ---
 
 ## Entwicklung
 
+Voraussetzungen: Node.js 18+ (für den Desktop-Build wird die in `package.json` angegebene
+Electron-Version verwendet).
+
 ```bash
-npm test                          # 22 Tests (Token, Auth, Rotation, Queue, MCP, Dashboard)
-npm run dev                       # Auto-Reload + Debug-Logs
-node scripts/mock-studio.js       # Studio-Plugin simulieren, ohne Roblox zu starten
+npm install
+npm test                 # Unit- und End-to-End-Tests
+npm start                # Bridge ohne Desktop-Fenster
+npm run desktop          # Electron-App im Entwicklungsmodus
+npm run dist:win         # Windows Installer + portable EXE
 ```
 
-Der Mock-Client ist der schnellste Weg, die Bridge und das Dashboard end-to-end zu testen:
-Bridge in einem Terminal starten, `mock-studio.js` in einem zweiten — danach liefern
-`/command` und `/mcp` echte Antworten.
+`npm run dist:win` lädt die festgelegte offizielle Windows-x64-Version von `cloudflared`
+herunter und bindet sie als Resource ein. Die Ergebnisse landen unter `release/`:
+
+```text
+Arena-Studio-Connecter-Setup-2.0.0-x64.exe
+Arena-Studio-Connecter-Portable-2.0.0-x64.exe
+```
 
 ### Projektstruktur
 
-```
+```text
+desktop/
+  main.js                 Electron-Hauptprozess und Service-Lifecycle
+  preload.cjs             minimale, sichere Renderer-API
+  cloudflareTunnel.js     Cloudflare-Prozess und URL-Erkennung
+  discoveryServer.js      nur lokaler Plugin-Bootstrap
+  pluginInstaller.js      automatische RBXMX-Installation
+  settingsStore.js        DPAPI-verschlüsselte Einstellungen
+  renderer/               dunkelblaue animierte Desktop-UI
 src/
-  index.js              Entry point, CLI, Shutdown
-  server.js             HTTP-Server, Routing, Auth-Middleware
-  core/
-    token.js            Token-Erzeugung, konstant-zeitlicher Vergleich, Extraktion
-    session.js          Session-Zustand, Rotation, Statistik, Session-Datei
-    commandQueue.js     Queue mit Timeouts und Historie
-    logger.js           Level-Logger mit Ringpuffer, Datei-Sink und Token-Redaktion
-    config.js           Defaults < ENV < CLI-Flags
-    banner.js           ---BRIDGE--- Startausgabe
-  routes/
-    api.js              /status /ping /actions /command /queue /logs /token/rotate
-    studio.js           /studio/handshake /poll /result /log
-    mcp.js              /mcp (JSON-RPC 2.0)
-public/                 Web-Dashboard (kein Build nötig)
-roblox/                 Roblox-Studio-Plugin (Luau)
-scripts/                PowerShell-Launcher, CLI, Mock-Studio
-tests/                  node:test Suite
-start-bridge.bat        Windows-Launcher
+  server.js               HTTP-Server, Routing und Auth
+  core/                   Token, Session, Queue, Prompt, Logging
+  routes/                 REST, Studio, MCP und Agent Guide
+roblox/
+  ArenaStudioConnecter.server.lua
+scripts/
+  download-cloudflared.mjs, CLI, Mock-Studio, PowerShell-Launcher
+tests/
+  Token-, Server-, Routing-, Prompt-, Discovery- und Installer-Tests
 ```
-
-### Sicherheitshinweise
-
-* Die Bridge bindet standardmäßig nur an `127.0.0.1` und ist damit nicht aus dem Netz erreichbar.
-* `.runtime/` und `logs/` sind gitignored — der Token darf nie im Repository landen.
-* Wird die Bridge bewusst auf `0.0.0.0` gebunden, schützt allein der Token — dann unbedingt
-  `--token-bytes 32` verwenden und den Port per Firewall einschränken.
-* Der Token erlaubt Codeausführung in Studio. Niemals in Screenshots, Issues oder Chats teilen;
-  im Zweifel `POST /token/rotate` aufrufen oder die Bridge neu starten.
-
----
 
 ## Lizenz
 

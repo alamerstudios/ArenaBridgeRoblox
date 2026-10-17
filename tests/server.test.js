@@ -31,7 +31,7 @@ test('start prints a fresh url and token, and they differ per start', async () =
   for (let i = 0; i < 3; i += 1) {
     await withBridge(async (_bridge, info) => {
       assert.match(info.url, /^http:\/\/127\.0\.0\.1:\d+$/);
-      assert.match(info.token, /^nxs_/);
+      assert.match(info.token, /^asc_/);
       tokens.push(info.token);
     });
   }
@@ -55,7 +55,7 @@ test('/status requires a token', async () => {
     assert.equal(missing.status, 401);
     assert.equal((await missing.json()).error.code, 'TOKEN_MISSING');
 
-    const wrong = await fetch(`${info.url}/status`, { headers: auth('nxs_definitely_wrong') });
+    const wrong = await fetch(`${info.url}/status`, { headers: auth('asc_definitely_wrong') });
     assert.equal(wrong.status, 403);
     assert.equal((await wrong.json()).error.code, 'TOKEN_INVALID');
 
@@ -134,7 +134,7 @@ test('a simulated Studio client completes a command end to end', async () => {
       assert.ok(command, 'poller should receive the queued command');
       assert.equal(command.action, 'get_place_info');
       await fetch(`${info.url}/studio/result`, {
-        method: 'POST', headers: auth(info.token),
+        method: 'POST', headers: { ...auth(info.token), 'X-Client-Id': 'test-studio' },
         body: JSON.stringify({ id: command.id, ok: true, result: { placeId: 42, name: 'TestPlace' } }),
       });
     })();
@@ -175,7 +175,7 @@ test('MCP endpoint speaks JSON-RPC 2.0', async () => {
     });
     const initBody = await init.json();
     assert.equal(initBody.jsonrpc, '2.0');
-    assert.equal(initBody.result.serverInfo.name, 'nexusai-bridge');
+    assert.equal(initBody.result.serverInfo.name, 'arena-studio-connecter');
 
     const tools = await (await fetch(`${info.url}/mcp`, {
       method: 'POST', headers: auth(info.token),
@@ -224,7 +224,81 @@ test('dashboard is served publicly but contains no token', async () => {
     const res = await fetch(`${info.url}/dashboard`);
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.ok(html.includes('NexusAI'));
+    assert.ok(html.includes('Arena Studio Connecter'));
     assert.equal(html.includes(info.token), false);
+  });
+});
+
+test('/agent/guide is public, target-aware and contains no secret', async () => {
+  await withBridge(async (_bridge, info) => {
+    await fetch(`${info.url}/studio/handshake`, {
+      method: 'POST',
+      headers: auth(info.token),
+      body: JSON.stringify({
+        clientId: 'guide-studio',
+        version: '2.0.0',
+        placeId: 123,
+        placeName: 'Guide Place',
+        gameId: 456,
+        accountName: 'Builder',
+      }),
+    });
+    const res = await fetch(`${info.url}/agent/guide?clientId=guide-studio`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/markdown/);
+    const guide = await res.text();
+    assert.ok(guide.includes('Guide Place'));
+    assert.ok(guide.includes('targetClientId'));
+    assert.ok(guide.includes('guide-studio'));
+    assert.equal(guide.includes(info.token), false);
+  });
+});
+
+test('commands are routed only to the selected Studio Place', async () => {
+  await withBridge(async (_bridge, info) => {
+    for (const [clientId, placeName] of [['studio-a', 'Place A'], ['studio-b', 'Place B']]) {
+      const response = await fetch(`${info.url}/studio/handshake`, {
+        method: 'POST',
+        headers: auth(info.token),
+        body: JSON.stringify({ clientId, placeName, placeId: clientId === 'studio-a' ? 1 : 2, version: '2.0.0' }),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const ambiguous = await fetch(`${info.url}/command`, {
+      method: 'POST',
+      headers: auth(info.token),
+      body: JSON.stringify({ action: 'ping' }),
+    });
+    assert.equal(ambiguous.status, 400);
+    assert.equal((await ambiguous.json()).error.code, 'TARGET_REQUIRED');
+
+    const pollA = fetch(`${info.url}/studio/poll`, {
+      headers: { ...auth(info.token), 'X-Client-Id': 'studio-a' },
+    }).then((response) => response.json());
+    const pollB = fetch(`${info.url}/studio/poll`, {
+      headers: { ...auth(info.token), 'X-Client-Id': 'studio-b' },
+    }).then((response) => response.json());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const commandResponse = fetch(`${info.url}/command`, {
+      method: 'POST',
+      headers: auth(info.token),
+      body: JSON.stringify({ action: 'get_place_info', targetClientId: 'studio-b' }),
+    });
+
+    const resultB = await pollB;
+    assert.equal(resultB.command.action, 'get_place_info');
+    await fetch(`${info.url}/studio/result`, {
+      method: 'POST',
+      headers: { ...auth(info.token), 'X-Client-Id': 'studio-b' },
+      body: JSON.stringify({ id: resultB.command.id, ok: true, result: { placeName: 'Place B' } }),
+    });
+
+    const completed = await commandResponse;
+    assert.equal(completed.status, 200);
+    assert.equal((await completed.json()).command.assignedClientId, 'studio-b');
+    const resultA = await pollA;
+    assert.equal(resultA.command, null, 'the other Studio client must not receive the targeted command');
   });
 });

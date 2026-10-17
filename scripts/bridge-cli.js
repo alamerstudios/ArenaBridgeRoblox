@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * NexusAI Bridge CLI — talk to a running bridge from the terminal.
+ * Arena Studio Connecter CLI — talk to a running bridge from the terminal.
  *
  * The url + token are discovered automatically from the session file written
  * by the running bridge (.runtime/session.json), or can be passed explicitly.
@@ -16,8 +16,8 @@
  *   node scripts/bridge-cli.js rotate
  *
  * Explicit connection:
- *   node scripts/bridge-cli.js status --url http://127.0.0.1:8787 --token nxs_xxx
- *   NEXUSAI_BRIDGE_URL / NEXUSAI_BRIDGE_TOKEN environment variables also work.
+ *   node scripts/bridge-cli.js status --url http://127.0.0.1:8787 --token asc_xxx
+ *   ARENA_STUDIO_BRIDGE_URL / ARENA_STUDIO_BRIDGE_TOKEN environment variables also work.
  */
 
 import fs from 'node:fs';
@@ -45,8 +45,8 @@ function parseArgs(argv) {
 }
 
 function resolveConnection(options) {
-  const url = options.url ?? process.env.NEXUSAI_BRIDGE_URL;
-  const token = options.token ?? process.env.NEXUSAI_BRIDGE_TOKEN;
+  const url = options.url ?? process.env.ARENA_STUDIO_BRIDGE_URL;
+  const token = options.token ?? process.env.ARENA_STUDIO_BRIDGE_TOKEN;
   if (url && token) return { url: url.replace(/\/+$/, ''), token, source: 'flags/env' };
 
   const sessionFile = options.session ?? DEFAULT_SESSION_FILE;
@@ -85,7 +85,7 @@ function print(value) {
 }
 
 const HELP = `
-NexusAI Bridge CLI
+Arena Studio Connecter CLI
 
 Befehle:
   status                        Bridge-Status abfragen
@@ -114,7 +114,7 @@ async function main() {
   }
 
   if (command === 'health') {
-    const url = (options.url ?? process.env.NEXUSAI_BRIDGE_URL ?? '').replace(/\/+$/, '')
+    const url = (options.url ?? process.env.ARENA_STUDIO_BRIDGE_URL ?? '').replace(/\/+$/, '')
       || resolveConnection({ ...options, token: 'unused' }).url;
     const res = await fetch(`${url}/health`);
     print(await res.json());

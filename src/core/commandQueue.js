@@ -1,12 +1,7 @@
 /**
- * Command queue.
- *
- * Roblox Studio plugins cannot be reached from outside (no inbound sockets),
- * so the plugin long-polls the bridge for work. Flow:
- *
- *   POST /command        -> caller enqueues a command, awaits the result
- *   GET  /studio/poll    -> Studio plugin picks up the next pending command
- *   POST /studio/result  -> Studio plugin returns the result, caller unblocks
+ * Command queue shared by Arena Agent and the polling Roblox Studio plugins.
+ * Commands can target one exact Studio client so multiple open Places never
+ * consume each other's work.
  */
 
 import { EventEmitter } from 'node:events';
@@ -15,26 +10,18 @@ import { generateId } from './token.js';
 /** @typedef {'pending'|'dispatched'|'completed'|'failed'|'timeout'} CommandState */
 
 export class CommandQueue extends EventEmitter {
-  /**
-   * @param {{ timeoutMs?: number, historySize?: number, logger?: import('./logger.js').Logger }} [options]
-   */
   constructor(options = {}) {
     super();
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.historySize = options.historySize ?? 100;
     this.logger = options.logger ?? null;
-
-    /** @type {Array<object>} */
     this.pending = [];
-    /** @type {Map<string, object>} */
     this.inFlight = new Map();
-    /** @type {Array<object>} */
     this.history = [];
   }
 
   /**
-   * Enqueue a command and return a promise resolving with the Studio result.
-   * @param {{ action: string, params?: object, source?: string, timeoutMs?: number }} input
+   * @param {{ action: string, params?: object, source?: string, timeoutMs?: number, targetClientId?: string|null }} input
    */
   enqueue(input) {
     const command = {
@@ -42,6 +29,8 @@ export class CommandQueue extends EventEmitter {
       action: input.action,
       params: input.params ?? {},
       source: input.source ?? 'api',
+      targetClientId: input.targetClientId || null,
+      assignedClientId: null,
       state: /** @type {CommandState} */ ('pending'),
       createdAt: Date.now(),
       dispatchedAt: null,
@@ -51,43 +40,57 @@ export class CommandQueue extends EventEmitter {
     };
 
     const timeoutMs = input.timeoutMs ?? this.timeoutMs;
-
     const promise = new Promise((resolve) => {
       command.timer = setTimeout(() => {
         if (command.state === 'completed' || command.state === 'failed') return;
+        const previousState = command.state;
         command.state = 'timeout';
         command.completedAt = Date.now();
-        command.error = `No response from Roblox Studio within ${timeoutMs}ms. Is the NexusAI plugin running?`;
+        command.error = `No response from the selected Roblox Studio client within ${timeoutMs}ms. Is Arena Studio Connecter running?`;
+        if (previousState === 'dispatched') this.inFlight.delete(command.id);
+        else this.pending = this.pending.filter((candidate) => candidate !== command);
         this.#finish(command);
-        resolve(this.describe(command));
       }, timeoutMs);
-      // Do not hold the event loop open just for a pending command.
       if (typeof command.timer.unref === 'function') command.timer.unref();
       command.resolve = resolve;
     });
 
     this.pending.push(command);
-    this.logger?.info(`command queued: ${command.action}`, { id: command.id, source: command.source });
+    this.logger?.info(`command queued: ${command.action}`, {
+      id: command.id,
+      source: command.source,
+      targetClientId: command.targetClientId,
+    });
     this.emit('queued', this.describe(command));
-
     return { command, promise };
   }
 
-  /** Studio picks up the next pending command (or null when idle). */
-  dequeue() {
-    const command = this.pending.shift();
-    if (!command) return null;
+  /**
+   * Return the next command this polling client is allowed to execute.
+   * Untargeted commands may be consumed by any client for backwards
+   * compatibility; targeted commands only match the selected Place.
+   */
+  dequeue(clientId = null) {
+    const index = this.pending.findIndex((command) => (
+      command.targetClientId === null || (clientId && command.targetClientId === clientId)
+    ));
+    if (index < 0) return null;
+
+    const [command] = this.pending.splice(index, 1);
     command.state = 'dispatched';
     command.dispatchedAt = Date.now();
+    command.assignedClientId = clientId || null;
     this.inFlight.set(command.id, command);
     this.emit('dispatched', this.describe(command));
     return command;
   }
 
   /** Studio reports a result for a previously dispatched command. */
-  complete(id, { ok = true, result = null, error = null } = {}) {
+  complete(id, { ok = true, result = null, error = null } = {}, clientId = null) {
     const command = this.inFlight.get(id);
     if (!command) return null;
+    if (command.assignedClientId && command.assignedClientId !== clientId) return null;
+
     this.inFlight.delete(id);
     command.state = ok ? 'completed' : 'failed';
     command.result = result;
@@ -116,6 +119,8 @@ export class CommandQueue extends EventEmitter {
       action: command.action,
       params: command.params,
       source: command.source,
+      targetClientId: command.targetClientId,
+      assignedClientId: command.assignedClientId,
       state: command.state,
       createdAt: new Date(command.createdAt).toISOString(),
       durationMs: command.completedAt ? command.completedAt - command.createdAt : null,
@@ -133,7 +138,6 @@ export class CommandQueue extends EventEmitter {
     };
   }
 
-  /** Fail everything still outstanding (used on shutdown). */
   drain(reason = 'bridge shutting down') {
     for (const command of [...this.pending, ...this.inFlight.values()]) {
       if (command.state === 'completed' || command.state === 'failed') continue;

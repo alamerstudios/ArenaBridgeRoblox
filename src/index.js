@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * NexusAI Bridge — entry point.
+ * Arena Studio Connecter — entry point.
  *
  * Generates a fresh token on every start, boots the HTTP server and prints the
  * machine-readable ---BRIDGE--- block consumed by the .bat/.ps1 launchers.
@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 import { loadConfig, HELP_TEXT } from './core/config.js';
 import { BridgeServer } from './server.js';
+import { PluginDiscoveryServer } from '../desktop/discoveryServer.js';
+import { installStudioPlugin } from '../desktop/pluginInstaller.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,7 +43,7 @@ async function main() {
     return;
   }
   if (flags.version) {
-    process.stdout.write(`nexusai-bridge ${readVersion()}\n`);
+    process.stdout.write(`arena-studio-connecter ${readVersion()}\n`);
     return;
   }
   if (flags.printConfig) {
@@ -51,13 +53,28 @@ async function main() {
 
   const bridge = new BridgeServer(config);
 
+  if (process.platform === 'win32') {
+    const plugin = installStudioPlugin({
+      sourcePath: path.resolve(__dirname, '..', 'roblox', 'ArenaStudioConnecter.server.lua'),
+    });
+    bridge.logger[plugin.installed ? 'info' : 'warn'](plugin.message, plugin.path ? { path: plugin.path } : undefined);
+  }
+
   let info;
   try {
     info = await bridge.start();
   } catch (err) {
-    process.stderr.write(`\n[NexusAI Bridge] Start fehlgeschlagen: ${err.message}\n\n`);
+    process.stderr.write(`\n[Arena Studio Connecter] Start fehlgeschlagen: ${err.message}\n\n`);
     process.exitCode = 1;
     return;
+  }
+
+  const discovery = new PluginDiscoveryServer({ getSession: () => bridge.session });
+  try {
+    const discovered = await discovery.start();
+    bridge.logger.info('Studio plugin discovery ready', { url: discovered.url });
+  } catch (error) {
+    bridge.logger.warn(`Studio plugin discovery unavailable: ${error.message}`);
   }
 
   if (config.openBrowser && config.dashboard) {
@@ -69,6 +86,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     bridge.logger.info(`received ${signal}`);
+    await discovery.stop();
     await bridge.stop();
     process.exit(0);
   };

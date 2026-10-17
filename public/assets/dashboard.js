@@ -1,4 +1,4 @@
-/* NexusAI Bridge dashboard — dependency free.
+/* Arena Studio Connecter dashboard — dependency free.
    The token is never baked in: it comes from ?token= or the input field and
    is kept in sessionStorage only. */
 
@@ -13,13 +13,13 @@ const state = {
 
 const EXAMPLES = {
   ping: {},
-  run_luau: { code: 'print("Hello from NexusAI Bridge")\nreturn workspace:GetChildren()' },
+  run_luau: { code: 'print("Hello from Arena Studio Connecter")\nreturn workspace:GetChildren()' },
   get_place_info: {},
   list_instances: { path: 'game.Workspace', depth: 1 },
   get_instance: { path: 'game.Workspace.Baseplate' },
-  create_instance: { className: 'Part', parent: 'game.Workspace', properties: { Name: 'NexusPart', Anchored: true } },
-  set_property: { path: 'game.Workspace.NexusPart', property: 'Transparency', value: 0.5 },
-  delete_instance: { path: 'game.Workspace.NexusPart' },
+  create_instance: { className: 'Part', parent: 'game.Workspace', properties: { Name: 'ArenaPart', Anchored: true } },
+  set_property: { path: 'game.Workspace.ArenaPart', property: 'Transparency', value: 0.5 },
+  delete_instance: { path: 'game.Workspace.ArenaPart' },
   get_script_source: { path: 'game.ServerScriptService.Main' },
   set_script_source: { path: 'game.ServerScriptService.Main', source: 'print("updated")' },
   get_selection: {},
@@ -94,7 +94,7 @@ function renderStatus(data) {
   const clients = data.clients ?? [];
   $('clients').innerHTML = clients.length
     ? clients.map((c) => `<tr><td class="mono">${escapeHtml(c.name)}</td><td class="mono">${escapeHtml(c.version)}</td><td class="mono">${escapeHtml(c.place ?? '—')}</td><td>${Math.round(c.lastSeenMs / 1000)}s</td></tr>`).join('')
-    : '<tr><td colspan="4" style="color:var(--muted)">Kein Client verbunden — starte das NexusAI-Plugin in Roblox Studio.</td></tr>';
+    : '<tr><td colspan="4" style="color:var(--muted)">Kein Client verbunden — starte das Arena-Studio-Connecter-Plugin in Roblox Studio.</td></tr>';
 
   const history = data.queue?.history ?? [];
   $('history').innerHTML = history.length
@@ -197,7 +197,7 @@ async function rotateToken() {
   try {
     const data = await api('/token/rotate', { method: 'POST' });
     state.token = data.token;
-    sessionStorage.setItem('nexusai_token', data.token);
+    sessionStorage.setItem('arena_studio_token', data.token);
     $('token').value = data.token;
     alert(`Neuer Token:\n\n${data.token}\n\nBitte in allen Clients (Studio-Plugin, CLI) aktualisieren.`);
     refresh();
@@ -210,7 +210,7 @@ function connect() {
   const token = $('token').value.trim();
   if (!token) { setConnected(false, 'Token fehlt'); return; }
   state.token = token;
-  sessionStorage.setItem('nexusai_token', token);
+  sessionStorage.setItem('arena_studio_token', token);
   startPolling();
 }
 
@@ -239,7 +239,7 @@ $('copy').addEventListener('click', async () => {
 
 // Token from ?token= (bridge start link) or sessionStorage
 const urlToken = new URLSearchParams(location.search).get('token');
-const savedToken = sessionStorage.getItem('nexusai_token');
+const savedToken = sessionStorage.getItem('arena_studio_token');
 if (urlToken) {
   $('token').value = urlToken;
   // Remove the token from the address bar so it does not linger in history.

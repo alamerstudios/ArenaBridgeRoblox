@@ -1,8 +1,6 @@
 /**
- * Session state: the per-start identity of the bridge.
- * Holds the dynamically generated token, tracks auth statistics and
- * persists a machine-readable descriptor so helper scripts (.bat/.ps1) and
- * the Roblox plugin can discover url + token without any hardcoding.
+ * Session state for Arena Studio Connecter.
+ * Holds the per-start token and live metadata for every Roblox Studio process.
  */
 
 import fs from 'node:fs';
@@ -10,10 +8,24 @@ import path from 'node:path';
 import os from 'node:os';
 import { generateToken, generateId, safeCompare, maskToken } from './token.js';
 
+const CLIENT_FIELDS = [
+  'name',
+  'version',
+  'place',
+  'placeId',
+  'placeName',
+  'gameId',
+  'placeVersion',
+  'studioVersion',
+  'accountUserId',
+  'accountName',
+  'accountDisplayName',
+  'isEdit',
+  'isRunning',
+];
+
 export class Session {
-  /**
-   * @param {{ tokenBytes?: number, sessionFile?: string|null }} [options]
-   */
+  /** @param {{ tokenBytes?: number, sessionFile?: string|null }} [options] */
   constructor(options = {}) {
     this.id = generateId(8);
     this.token = generateToken({ bytes: options.tokenBytes });
@@ -34,16 +46,14 @@ export class Session {
       commandsFailed: 0,
     };
 
-    /** @type {Map<string, {lastSeen:number, name:string, version:string, place:string|null}>} */
+    /** @type {Map<string, object>} */
     this.clients = new Map();
   }
 
-  /** Validate a presented token against the current session token. */
   validate(candidate) {
     return safeCompare(this.token, candidate);
   }
 
-  /** Generate a brand new token, invalidating the previous one immediately. */
   rotate(tokenBytes) {
     const previous = this.token;
     this.token = generateToken({ bytes: tokenBytes });
@@ -58,35 +68,41 @@ export class Session {
     this.persist();
   }
 
-  /** Register/refresh a connected client (Roblox Studio plugin, CLI, MCP client). */
+  /** Register or refresh a connected Studio process without losing handshake metadata. */
   touchClient(id, info = {}) {
     if (!id) return;
-    const existing = this.clients.get(id) ?? {};
-    this.clients.set(id, {
-      name: info.name ?? existing.name ?? 'unknown',
-      version: info.version ?? existing.version ?? '0',
-      place: info.place ?? existing.place ?? null,
-      lastSeen: Date.now(),
-    });
+    const existing = this.clients.get(id) ?? {
+      name: 'Roblox Studio',
+      version: 'unknown',
+      place: null,
+    };
+    const updated = { ...existing };
+    for (const field of CLIENT_FIELDS) {
+      if (info[field] !== undefined && info[field] !== null) updated[field] = info[field];
+    }
+    updated.lastSeen = Date.now();
+    this.clients.set(id, updated);
   }
 
   activeClients(windowMs = 60_000) {
     const now = Date.now();
     return [...this.clients.entries()]
-      .filter(([, c]) => now - c.lastSeen <= windowMs)
-      .map(([id, c]) => ({ id, name: c.name, version: c.version, place: c.place, lastSeenMs: now - c.lastSeen }));
+      .filter(([, client]) => now - client.lastSeen <= windowMs)
+      .map(([id, client]) => ({ ...client, id, lastSeenMs: now - client.lastSeen }))
+      .sort((a, b) => a.lastSeenMs - b.lastSeenMs);
+  }
+
+  hasActiveClient(id, windowMs = 60_000) {
+    return this.activeClients(windowMs).some((client) => client.id === id);
   }
 
   uptimeSeconds() {
     return Math.round((Date.now() - this.startedAt.getTime()) / 1000);
   }
 
-  /**
-   * Public status payload. `includeToken` is only true for authenticated calls.
-   */
   toStatus({ includeToken = false } = {}) {
     return {
-      service: 'nexusai-bridge',
+      service: 'arena-studio-connecter',
       status: 'running',
       sessionId: this.id,
       url: this.url,
@@ -103,17 +119,13 @@ export class Session {
     };
   }
 
-  /**
-   * Write the session descriptor to disk (gitignored) so that shell helpers,
-   * the dashboard launcher and the Roblox plugin can pick up url + token.
-   */
   persist() {
     if (!this.sessionFile) return;
     try {
       const abs = path.resolve(this.sessionFile);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       const payload = {
-        service: 'nexusai-bridge',
+        service: 'arena-studio-connecter',
         sessionId: this.id,
         url: this.url,
         token: this.token,
@@ -124,7 +136,7 @@ export class Session {
       fs.writeFileSync(abs, JSON.stringify(payload, null, 2), { mode: 0o600 });
       this.sessionFileAbs = abs;
     } catch {
-      /* non-fatal: the banner still prints url + token */
+      // Non-fatal: desktop discovery and the startup banner still work.
     }
   }
 

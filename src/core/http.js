@@ -5,7 +5,7 @@
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Bridge-Token, X-Api-Key, X-Client-Id, X-Client-Name',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Bridge-Token, X-Api-Key, X-Client-Id, X-Client-Name, X-Studio-Client-Id',
   'Access-Control-Max-Age': '600',
 };
 

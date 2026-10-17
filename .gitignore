@@ -19,3 +19,7 @@ Thumbs.db
 # Env
 .env
 .env.*
+
+# Desktop packaging artifacts and downloaded helper binary
+release/
+vendor/

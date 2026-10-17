@@ -15,7 +15,7 @@ const LINE = '='.repeat(60);
 export function renderBanner({ url, token }) {
   return [
     LINE,
-    'NexusAI Bridge: LAEUFT',
+    'Arena Studio Connecter: LAEUFT',
     LINE,
     '---BRIDGE---',
     `url: ${url}`,

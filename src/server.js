@@ -1,5 +1,5 @@
 /**
- * NexusAI Bridge HTTP server: routing, auth middleware and lifecycle.
+ * Arena Studio Connecter HTTP server: routing, auth middleware and lifecycle.
  */
 
 import http from 'node:http';
@@ -16,6 +16,7 @@ import { renderBanner, renderHints } from './core/banner.js';
 import { createApiRoutes, ENDPOINTS } from './routes/api.js';
 import { createStudioRoutes } from './routes/studio.js';
 import { createMcpRoutes } from './routes/mcp.js';
+import { createAgentRoutes } from './routes/agent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -30,7 +31,7 @@ const STATIC_TYPES = {
 };
 
 /** Routes reachable without a token. */
-const PUBLIC_ROUTES = new Set(['/health', '/', '/dashboard', '/favicon.ico']);
+const PUBLIC_ROUTES = new Set(['/health', '/', '/dashboard', '/favicon.ico', '/agent/guide']);
 
 export class BridgeServer {
   /** @param {object} config */
@@ -66,6 +67,7 @@ export class BridgeServer {
     this.api = createApiRoutes(ctx);
     this.studio = createStudioRoutes(ctx);
     this.mcp = createMcpRoutes(ctx);
+    this.agent = createAgentRoutes(ctx);
 
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => {
@@ -103,13 +105,17 @@ export class BridgeServer {
     if (pathname === '/health') {
       return sendJson(res, 200, {
         ok: true,
-        service: 'nexusai-bridge',
+        service: 'arena-studio-connecter',
         status: 'running',
         sessionId: this.session.id,
         uptimeSeconds: this.session.uptimeSeconds(),
         authRequired: true,
         timestamp: new Date().toISOString(),
       });
+    }
+
+    if (method === 'GET' && pathname === '/agent/guide') {
+      return this.agent.guide(req, res, url);
     }
 
     if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {

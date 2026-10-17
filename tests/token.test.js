@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { generateToken, safeCompare, maskToken, extractToken } from '../src/core/token.js';
 import { Session } from '../src/core/session.js';
 
@@ -9,9 +12,9 @@ test('generateToken produces a unique token on every call', () => {
   assert.equal(tokens.size, 1000, 'all generated tokens must be unique');
 });
 
-test('generateToken uses the nxs_ prefix and sufficient entropy', () => {
+test('generateToken uses the asc_ prefix and sufficient entropy', () => {
   const token = generateToken();
-  assert.match(token, /^nxs_[A-Za-z0-9_-]{32,}$/);
+  assert.match(token, /^asc_[A-Za-z0-9_-]{32,}$/);
   assert.ok(token.length >= 36);
 });
 
@@ -74,7 +77,7 @@ test('Session.validate accepts only the current token', () => {
   const session = new Session({ sessionFile: null });
   const original = session.token;
   assert.equal(session.validate(original), true);
-  assert.equal(session.validate('nxs_wrong'), false);
+  assert.equal(session.validate('asc_wrong'), false);
 
   session.rotate();
   assert.equal(session.validate(original), false, 'rotated-out token must be rejected');
@@ -90,14 +93,25 @@ test('Session status hides the raw token by default', () => {
   assert.equal(session.toStatus({ includeToken: true }).token, session.token);
 });
 
-test('no real token literal exists anywhere in the repository', async () => {
-  const { execSync } = await import('node:child_process');
-  // Real tokens are base64url; placeholders in docs deliberately contain no
-  // base64url-only run long enough to match, and BEISPIEL/EXAMPLE is excluded.
-  const out = execSync(
-    'grep -rInE "nxs_[A-Za-z0-9_-]{20,}" src public scripts roblox tests docs *.bat *.md ' +
-    '| grep -viE "BEISPIEL|EXAMPLE|PLACEHOLDER" || true',
-    { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname },
-  ).trim();
-  assert.equal(out, '', `hardcoded token found:\n${out}`);
+test('no real token literal exists anywhere in the repository', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const candidates = ['src', 'desktop', 'public', 'scripts', 'roblox', 'tests', 'docs', 'README.md', 'start-bridge.bat'];
+  const matches = [];
+
+  const scan = (entry) => {
+    const stat = fs.statSync(entry);
+    if (stat.isDirectory()) {
+      for (const child of fs.readdirSync(entry)) scan(path.join(entry, child));
+      return;
+    }
+    const content = fs.readFileSync(entry, 'utf8');
+    content.split(/\r?\n/).forEach((line, index) => {
+      if (/asc_[A-Za-z0-9_-]{20,}/.test(line) && !/BEISPIEL|EXAMPLE|PLACEHOLDER/i.test(line)) {
+        matches.push(`${path.relative(root, entry)}:${index + 1}:${line.trim()}`);
+      }
+    });
+  };
+
+  for (const candidate of candidates) scan(path.join(root, candidate));
+  assert.deepEqual(matches, [], `hardcoded token found:\n${matches.join('\n')}`);
 });

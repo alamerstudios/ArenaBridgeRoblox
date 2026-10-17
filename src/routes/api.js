@@ -64,7 +64,7 @@ export function createApiRoutes(ctx) {
       const body = await readJsonBody(req, config.maxBodyBytes);
       if (!body.ok) return sendError(res, 400, 'INVALID_BODY', body.error);
 
-      const { action, params, timeoutMs, async: isAsync } = body.data ?? {};
+      const { action, params, timeoutMs, async: isAsync, targetClientId } = body.data ?? {};
       if (typeof action !== 'string' || !action.trim()) {
         return sendError(res, 400, 'MISSING_ACTION', 'Field "action" is required.', { supported: [...ACTION_NAMES] });
       }
@@ -74,12 +74,28 @@ export function createApiRoutes(ctx) {
       if (params !== undefined && (typeof params !== 'object' || params === null || Array.isArray(params))) {
         return sendError(res, 400, 'INVALID_PARAMS', 'Field "params" must be an object.');
       }
+      if (targetClientId !== undefined && (typeof targetClientId !== 'string' || !targetClientId.trim())) {
+        return sendError(res, 400, 'INVALID_TARGET', 'Field "targetClientId" must be a non-empty string.');
+      }
+
+      const activeClients = session.activeClients();
+      if (targetClientId && !activeClients.some((client) => client.id === targetClientId)) {
+        return sendError(res, 409, 'STUDIO_CLIENT_OFFLINE', `Studio client "${targetClientId}" is not connected.`, {
+          connectedClientIds: activeClients.map((client) => client.id),
+        });
+      }
+      if (!targetClientId && activeClients.length > 1) {
+        return sendError(res, 400, 'TARGET_REQUIRED', 'Multiple Studio Places are open. Set "targetClientId" to select one.', {
+          clients: activeClients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
+        });
+      }
 
       session.stats.commandsQueued += 1;
       const { command, promise } = queue.enqueue({
         action,
         params,
         source: req.headers['x-client-name'] ? String(req.headers['x-client-name']) : 'http',
+        targetClientId: targetClientId || null,
         timeoutMs: Number.isFinite(timeoutMs) ? Math.min(Math.max(timeoutMs, 1000), 300_000) : config.commandTimeoutMs,
       });
 
@@ -140,6 +156,7 @@ export function createApiRoutes(ctx) {
 
 export const ENDPOINTS = [
   { method: 'GET', path: '/health', auth: false, description: 'Public liveness probe (no token needed)' },
+  { method: 'GET', path: '/agent/guide', auth: false, description: 'Secret-free Arena Agent connection guide' },
   { method: 'GET', path: '/status', auth: true, description: 'Full bridge status, stats and connected clients' },
   { method: 'GET', path: '/ping', auth: true, description: 'Authenticated liveness probe' },
   { method: 'GET', path: '/actions', auth: true, description: 'Catalogue of supported Studio actions' },

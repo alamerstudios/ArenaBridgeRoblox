@@ -1,22 +1,24 @@
-# NexusAI Bridge — API-Referenz
+# Arena Studio Connecter — API-Referenz
 
 Basis-URL: die `url` aus der `---BRIDGE---` Box beim Start (z. B. `http://127.0.0.1:8787`).
 
 ## Authentifizierung
 
-Alle Endpoints außer `/health` und `/dashboard` benötigen den **dynamischen Session-Token**.
+Alle Endpoints außer `/health`, `/agent/guide` und `/dashboard` benötigen den **dynamischen Session-Token**.
 Der Token wird bei jedem Bridge-Start neu erzeugt — es gibt keinen festen Token.
 
-Vier gleichwertige Varianten:
+Unterstützte Varianten:
 
 ```http
-Authorization: Bearer nxs_...
-X-Bridge-Token: nxs_...
-X-Api-Key: nxs_...
-GET /status?token=nxs_...
+Authorization: Bearer asc_...
+X-Bridge-Token: asc_...
+X-Api-Key: asc_...
+GET /status?token=asc_...
 ```
 
-Die Prüfung erfolgt konstant-zeitlich (SHA-256 + `timingSafeEqual`).
+Für Arena Agent soll ausschließlich der `Authorization`-Header verwendet werden. Der Token
+gehört nie in die Tunnel- oder Guide-URL; Query-Authentifizierung bleibt nur für das lokale
+Legacy-Dashboard erhalten. Die Prüfung erfolgt konstant-zeitlich (SHA-256 + `timingSafeEqual`).
 
 ### Fehlercodes
 
@@ -26,8 +28,9 @@ Die Prüfung erfolgt konstant-zeitlich (SHA-256 + `timingSafeEqual`).
 | 403 | `TOKEN_INVALID` | Token falsch oder veraltet (Bridge neu gestartet / rotiert) |
 | 429 | `TOO_MANY_AUTH_FAILURES` | 20 Fehlversuche von derselben IP |
 | 429 | `RATE_LIMITED` | Mehr als 600 Requests/Minute |
-| 400 | `INVALID_BODY`, `MISSING_ACTION`, `UNKNOWN_ACTION`, `INVALID_PARAMS` | Ungültige Eingabe |
+| 400 | `INVALID_BODY`, `MISSING_ACTION`, `UNKNOWN_ACTION`, `INVALID_PARAMS`, `INVALID_TARGET`, `TARGET_REQUIRED` | Ungültige Eingabe/Zielauswahl |
 | 404 | `NOT_FOUND`, `COMMAND_NOT_FOUND` | Route bzw. Befehl unbekannt |
+| 409 | `STUDIO_CLIENT_OFFLINE`, `WRONG_STUDIO_CLIENT` | Ziel-Place getrennt oder falscher Plugin-Client |
 | 502 | — | Studio hat einen Fehler zurückgemeldet |
 | 504 | — | Studio hat nicht rechtzeitig geantwortet |
 
@@ -50,9 +53,14 @@ Fehlerformat:
 Liveness ohne Token. Verrät keinerlei Token-Material.
 
 ```json
-{ "ok": true, "service": "nexusai-bridge", "status": "running",
+{ "ok": true, "service": "arena-studio-connecter", "status": "running",
   "sessionId": "1ea57a7e12a7d5f5", "uptimeSeconds": 42, "authRequired": true }
 ```
+
+### `GET /agent/guide?clientId=…` — öffentlich
+
+Secret-freie, aktuelle Markdown-Anleitung für Arena Agent. Die Route erklärt Authentifizierung,
+Workflow, Aktionen und die ausgewählte Studio-Client-ID, enthält aber niemals den Token.
 
 ### `GET /status`
 
@@ -73,7 +81,13 @@ Schickt einen Befehl an Roblox Studio und wartet auf das Ergebnis.
 
 ```jsonc
 // Request
-{ "action": "run_luau", "params": { "code": "return 1+1" }, "timeoutMs": 30000, "async": false }
+{
+  "action": "run_luau",
+  "params": { "code": "return 1+1" },
+  "targetClientId": "CLIENT_ID_DER_PLACE",
+  "timeoutMs": 30000,
+  "async": false
+}
 ```
 
 ```jsonc
@@ -83,8 +97,10 @@ Schickt einen Befehl an Roblox Studio und wartet auf das Ergebnis.
     "durationMs": 7, "ok": true, "result": { "returned": 2, "output": [] }, "error": null } }
 ```
 
-Mit `"async": true` antwortet die Bridge sofort mit `202` und einer `commandId`,
-das Ergebnis wird später über `GET /command/:id` abgeholt.
+`targetClientId` wählt die exakte offene Place. Bei mehr als einer verbundenen Studio-Session
+ist das Feld Pflicht; unbekannte oder getrennte Clients werden abgewiesen. Mit `"async": true`
+antwortet die Bridge sofort mit `202` und einer `commandId`, das Ergebnis wird später über
+`GET /command/:id` abgeholt.
 
 ### `GET /command/:id`
 
@@ -104,7 +120,7 @@ Erzeugt sofort einen neuen Token; der alte wird augenblicklich ungültig.
 Die Antwort ist die **einzige** Stelle, an der der neue Token im Klartext erscheint.
 
 ```json
-{ "ok": true, "rotated": true, "token": "nxs_...", "rotations": 1 }
+{ "ok": true, "rotated": true, "token": "asc_...", "rotations": 1 }
 ```
 
 ---
@@ -119,12 +135,14 @@ Unterstützte Methoden: `initialize`, `notifications/initialized`, `ping`,
 
 ```bash
 curl -X POST http://127.0.0.1:8787/mcp \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Studio-Client-Id: CLIENT_ID_DER_PLACE" \
+  -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
        "params":{"name":"run_luau","arguments":{"code":"return 1+1"}}}'
 ```
 
-Ressourcen: `nexusai://status`, `nexusai://logs`.
+Ressourcen: `arena-studio://status`, `arena-studio://logs`.
 
 ---
 
@@ -134,7 +152,7 @@ Roblox Studio kann keine eingehenden Verbindungen annehmen, daher **pollt** das 
 
 | Endpoint | Zweck |
 |----------|-------|
-| `POST /studio/handshake` | Plugin meldet sich an (`clientId`, `name`, `version`, `place`) |
+| `POST /studio/handshake` | Plugin meldet Client-, Place-, Studio- und Account-Metadaten an |
 | `GET /studio/poll` | Long-Poll; liefert den nächsten Befehl oder nach ~25 s `{ command: null, idle: true }` |
 | `POST /studio/result` | Plugin liefert `{ id, ok, result, error }` zurück |
 | `POST /studio/log` | Plugin leitet Studio-Output in das Bridge-Log weiter |
@@ -186,7 +204,7 @@ Beispiel:
 ```json
 { "action": "create_instance",
   "params": { "className": "Part", "parent": "game.Workspace",
-    "properties": { "Name": "NexusPart", "Anchored": true,
+    "properties": { "Name": "ArenaPart", "Anchored": true,
       "Position": { "__type": "Vector3", "x": 0, "y": 10, "z": 0 },
       "Material":  { "__type": "EnumItem", "enum": "Enum.Material", "name": "Neon" } } } }
 ```

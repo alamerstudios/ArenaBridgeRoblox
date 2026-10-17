@@ -1,0 +1,698 @@
+--!strict
+--[[
+    Arena Studio Connecter - Roblox Studio Plugin
+
+    Dieses Plugin wird von der Windows-App automatisch installiert und verbindet
+    sich selbst. URL und Session-Token werden ausschließlich über einen separaten,
+    nur lokal erreichbaren Discovery-Port geladen und niemals gespeichert.
+
+    Voraussetzung: Game Settings -> Security -> "Allow HTTP Requests" aktivieren.
+]]
+
+local HttpService = game:GetService("HttpService")
+local Selection = game:GetService("Selection")
+local RunService = game:GetService("RunService")
+local LogService = game:GetService("LogService")
+local ScriptEditorService = game:GetService("ScriptEditorService")
+local StudioService = game:GetService("StudioService")
+local Players = game:GetService("Players")
+local UserService = game:GetService("UserService")
+
+local PLUGIN_NAME = "Arena Studio Connecter"
+local PLUGIN_VERSION = "2.0.0"
+local DISCOVERY_URL = "http://127.0.0.1:32192/v1/session"
+local POLL_IDLE_WAIT = 0.25
+local RECONNECT_WAIT = 2.5
+
+local state = {
+    url = "",
+    token = "",
+    sessionId = "",
+    connected = false,
+    running = true,
+    clientId = HttpService:GenerateGUID(false),
+    lastError = nil :: string?,
+    commandsHandled = 0,
+}
+
+local outputBuffer: { { level: string, message: string, at: number } } = {}
+local MAX_OUTPUT = 200
+
+LogService.MessageOut:Connect(function(message, messageType)
+    local level = "info"
+    if messageType == Enum.MessageType.MessageWarning then
+        level = "warn"
+    elseif messageType == Enum.MessageType.MessageError then
+        level = "error"
+    end
+    table.insert(outputBuffer, { level = level, message = message, at = os.time() })
+    if #outputBuffer > MAX_OUTPUT then
+        table.remove(outputBuffer, 1)
+    end
+end)
+
+local function decodeResponse(response: any): (boolean, any)
+    if not response.Success then
+        return false, string.format("HTTP %d: %s", response.StatusCode, tostring(response.Body))
+    end
+    local decoded
+    local decodeOk = pcall(function()
+        decoded = HttpService:JSONDecode(response.Body)
+    end)
+    if not decodeOk then
+        return false, "Antwort konnte nicht gelesen werden"
+    end
+    return true, decoded
+end
+
+local function discoverSession(): (boolean, any)
+    local ok, response = pcall(function()
+        return HttpService:RequestAsync({
+            Url = DISCOVERY_URL,
+            Method = "GET",
+            Headers = { ["Accept"] = "application/json" },
+        })
+    end)
+    if not ok then
+        return false, tostring(response)
+    end
+    return decodeResponse(response)
+end
+
+local function request(method: string, requestPath: string, body: any?): (boolean, any)
+    if state.url == "" or state.token == "" then
+        return false, "Bridge-Session ist noch nicht verfuegbar"
+    end
+
+    local options = {
+        Url = state.url .. requestPath,
+        Method = method,
+        Headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. state.token,
+            ["X-Client-Id"] = state.clientId,
+            ["X-Client-Name"] = "Roblox Studio",
+        },
+    }
+    if body ~= nil then
+        options.Body = HttpService:JSONEncode(body)
+    end
+
+    local ok, response = pcall(function()
+        return HttpService:RequestAsync(options)
+    end)
+    if not ok then
+        return false, tostring(response)
+    end
+    if response.StatusCode == 401 or response.StatusCode == 403 then
+        state.token = ""
+        state.sessionId = ""
+    end
+    return decodeResponse(response)
+end
+
+local accountCache: any = nil
+local function readAccount(): any
+    if accountCache then
+        return accountCache
+    end
+
+    local userId = 0
+    pcall(function()
+        userId = StudioService:GetUserId()
+    end)
+
+    local username = nil
+    local displayName = nil
+    if userId > 0 then
+        pcall(function()
+            username = Players:GetNameFromUserIdAsync(userId)
+        end)
+        pcall(function()
+            local infos = UserService:GetUserInfosByUserIdsAsync({ userId })
+            if infos and infos[1] then
+                username = infos[1].Username or username
+                displayName = infos[1].DisplayName
+            end
+        end)
+    end
+
+    accountCache = {
+        userId = userId,
+        username = username,
+        displayName = displayName,
+    }
+    return accountCache
+end
+
+-- ===========================================================================
+-- Instance path helpers
+-- ===========================================================================
+
+local function resolvePath(path: string): Instance?
+	if path == nil or path == "" then
+		return nil
+	end
+	local current: Instance = game
+	local segments = string.split(path, ".")
+	for index, segment in ipairs(segments) do
+		if index == 1 and (segment == "game" or segment == "Game") then
+			continue
+		end
+		local nextInstance = current:FindFirstChild(segment)
+		if not nextInstance then
+			local serviceOk, service = pcall(function()
+				return game:GetService(segment :: any)
+			end)
+			if serviceOk and service then
+				nextInstance = service
+			end
+		end
+		if not nextInstance then
+			return nil
+		end
+		current = nextInstance
+	end
+	return current
+end
+
+local function fullName(instance: Instance): string
+	return instance:GetFullName()
+end
+
+local function describeInstance(instance: Instance, depth: number): any
+	local node = {
+		name = instance.Name,
+		className = instance.ClassName,
+		path = fullName(instance),
+		childCount = #instance:GetChildren(),
+	}
+	if depth > 0 then
+		local children = {}
+		for _, child in ipairs(instance:GetChildren()) do
+			table.insert(children, describeInstance(child, depth - 1))
+		end
+		node.children = children
+	end
+	return node
+end
+
+local function serializeValue(value: any): any
+	local valueType = typeof(value)
+	if valueType == "Instance" then
+		return { __type = "Instance", path = fullName(value), className = value.ClassName }
+	elseif valueType == "EnumItem" then
+		return { __type = "EnumItem", enum = tostring(value.EnumType), name = value.Name, value = value.Value }
+	elseif valueType == "Vector3" then
+		return { __type = "Vector3", x = value.X, y = value.Y, z = value.Z }
+	elseif valueType == "Vector2" then
+		return { __type = "Vector2", x = value.X, y = value.Y }
+	elseif valueType == "CFrame" then
+		return { __type = "CFrame", components = { value:GetComponents() } }
+	elseif valueType == "Color3" then
+		return { __type = "Color3", r = value.R, g = value.G, b = value.B }
+	elseif valueType == "UDim2" then
+		return { __type = "UDim2", xScale = value.X.Scale, xOffset = value.X.Offset, yScale = value.Y.Scale, yOffset = value.Y.Offset }
+	elseif valueType == "BrickColor" then
+		return { __type = "BrickColor", name = value.Name }
+	elseif valueType == "string" or valueType == "number" or valueType == "boolean" then
+		return value
+	elseif value == nil then
+		return nil
+	end
+	return tostring(value)
+end
+
+local function coerceValue(raw: any): any
+	if typeof(raw) ~= "table" then
+		return raw
+	end
+	if raw.__type == "Vector3" then
+		return Vector3.new(raw.x or 0, raw.y or 0, raw.z or 0)
+	elseif raw.__type == "Color3" then
+		return Color3.new(raw.r or 0, raw.g or 0, raw.b or 0)
+	elseif raw.__type == "UDim2" then
+		return UDim2.new(raw.xScale or 0, raw.xOffset or 0, raw.yScale or 0, raw.yOffset or 0)
+	elseif raw.__type == "BrickColor" then
+		return BrickColor.new(raw.name)
+	elseif raw.__type == "EnumItem" then
+		local enumType = (Enum :: any)[raw.enum:gsub("^Enum%.", "")]
+		if enumType then
+			return enumType[raw.name]
+		end
+	elseif raw.__type == "Instance" then
+		return resolvePath(raw.path)
+	end
+	return raw
+end
+
+-- ===========================================================================
+-- Command handlers
+-- ===========================================================================
+
+local handlers: { [string]: (params: any) -> any } = {}
+
+handlers.ping = function()
+	return {
+		pong = true,
+		studio = true,
+		version = PLUGIN_VERSION,
+		placeId = game.PlaceId,
+		isRunning = RunService:IsRunning(),
+	}
+end
+
+handlers.get_place_info = function()
+	return {
+		placeId = game.PlaceId,
+		gameId = game.GameId,
+		name = game.Name,
+		creatorId = game.CreatorId,
+		creatorType = tostring(game.CreatorType),
+		placeVersion = game.PlaceVersion,
+		workspaceChildren = #workspace:GetChildren(),
+		isRunning = RunService:IsRunning(),
+		isEdit = RunService:IsEdit(),
+		studioVersion = version(),
+	}
+end
+
+handlers.run_luau = function(params)
+	local code = params.code
+	if typeof(code) ~= "string" or code == "" then
+		error("Parameter 'code' (string) wird benoetigt", 0)
+	end
+
+	local chunk, compileError = loadstring(code)
+	if not chunk then
+		error("Kompilierfehler: " .. tostring(compileError), 0)
+	end
+
+	local captured = {}
+	local startedAt = os.clock()
+	local connection = LogService.MessageOut:Connect(function(message)
+		table.insert(captured, message)
+	end)
+
+	local ok, result = pcall(chunk)
+	connection:Disconnect()
+
+	if not ok then
+		error("Laufzeitfehler: " .. tostring(result), 0)
+	end
+
+	return {
+		returned = serializeValue(result),
+		output = captured,
+		durationMs = math.floor((os.clock() - startedAt) * 1000),
+	}
+end
+
+handlers.list_instances = function(params)
+	local instance = resolvePath(params.path or "game")
+	if not instance then
+		error("Pfad nicht gefunden: " .. tostring(params.path), 0)
+	end
+	local depth = math.clamp(tonumber(params.depth) or 1, 0, 5)
+	return describeInstance(instance, depth)
+end
+
+handlers.get_instance = function(params)
+	local instance = resolvePath(params.path)
+	if not instance then
+		error("Pfad nicht gefunden: " .. tostring(params.path), 0)
+	end
+
+	local properties = {}
+	for _, propertyName in ipairs({
+		"Name", "ClassName", "Parent", "Archivable", "Anchored", "CanCollide", "Transparency",
+		"Size", "Position", "Color", "Material", "Visible", "Enabled", "Text", "Value", "Disabled",
+	}) do
+		local ok, value = pcall(function()
+			return (instance :: any)[propertyName]
+		end)
+		if ok and value ~= nil then
+			properties[propertyName] = serializeValue(value)
+		end
+	end
+
+	return {
+		path = fullName(instance),
+		className = instance.ClassName,
+		properties = properties,
+		childCount = #instance:GetChildren(),
+	}
+end
+
+handlers.create_instance = function(params)
+	local className = params.className
+	if typeof(className) ~= "string" then
+		error("Parameter 'className' wird benoetigt", 0)
+	end
+	local parent = resolvePath(params.parent or "game.Workspace")
+	if not parent then
+		error("Parent nicht gefunden: " .. tostring(params.parent), 0)
+	end
+
+	local ok, instance = pcall(function()
+		return Instance.new(className :: any)
+	end)
+	if not ok then
+		error("Unbekannte Klasse: " .. className, 0)
+	end
+
+	if typeof(params.properties) == "table" then
+		for key, value in pairs(params.properties) do
+			local setOk, setErr = pcall(function()
+				(instance :: any)[key] = coerceValue(value)
+			end)
+			if not setOk then
+				warn(string.format("[%s] Property '%s' konnte nicht gesetzt werden: %s", PLUGIN_NAME, key, tostring(setErr)))
+			end
+		end
+	end
+
+	instance.Parent = parent
+	return { created = true, path = fullName(instance), className = instance.ClassName }
+end
+
+handlers.set_property = function(params)
+	local instance = resolvePath(params.path)
+	if not instance then
+		error("Pfad nicht gefunden: " .. tostring(params.path), 0)
+	end
+	local ok, err = pcall(function()
+		(instance :: any)[params.property] = coerceValue(params.value)
+	end)
+	if not ok then
+		error(string.format("Property '%s' konnte nicht gesetzt werden: %s", tostring(params.property), tostring(err)), 0)
+	end
+	return { updated = true, path = fullName(instance), property = params.property }
+end
+
+handlers.delete_instance = function(params)
+	local instance = resolvePath(params.path)
+	if not instance then
+		error("Pfad nicht gefunden: " .. tostring(params.path), 0)
+	end
+	local path = fullName(instance)
+	instance:Destroy()
+	return { deleted = true, path = path }
+end
+
+handlers.get_script_source = function(params)
+	local instance = resolvePath(params.path)
+	if not instance or not instance:IsA("LuaSourceContainer") then
+		error("Kein Script gefunden unter: " .. tostring(params.path), 0)
+	end
+	local ok, source = pcall(function()
+		return ScriptEditorService:GetEditorSource(instance)
+	end)
+	if not ok then
+		source = (instance :: any).Source
+	end
+	return { path = fullName(instance), className = instance.ClassName, source = source }
+end
+
+handlers.set_script_source = function(params)
+	local instance = resolvePath(params.path)
+	if not instance or not instance:IsA("LuaSourceContainer") then
+		error("Kein Script gefunden unter: " .. tostring(params.path), 0)
+	end
+	if typeof(params.source) ~= "string" then
+		error("Parameter 'source' (string) wird benoetigt", 0)
+	end
+
+	local ok, err = pcall(function()
+		ScriptEditorService:UpdateSourceAsync(instance, function()
+			return params.source
+		end)
+	end)
+	if not ok then
+		local fallbackOk, fallbackErr = pcall(function()
+			(instance :: any).Source = params.source
+		end)
+		if not fallbackOk then
+			error("Source konnte nicht gesetzt werden: " .. tostring(err) .. " / " .. tostring(fallbackErr), 0)
+		end
+	end
+	return { updated = true, path = fullName(instance), length = #params.source }
+end
+
+handlers.get_selection = function()
+	local items = {}
+	for _, instance in ipairs(Selection:Get()) do
+		table.insert(items, { path = fullName(instance), className = instance.ClassName, name = instance.Name })
+	end
+	return { count = #items, selection = items }
+end
+
+handlers.set_selection = function(params)
+	local instances = {}
+	local missing = {}
+	for _, path in ipairs(params.paths or {}) do
+		local instance = resolvePath(path)
+		if instance then
+			table.insert(instances, instance)
+		else
+			table.insert(missing, path)
+		end
+	end
+	Selection:Set(instances)
+	return { selected = #instances, missing = missing }
+end
+
+handlers.get_output = function(params)
+	local limit = math.clamp(tonumber(params.limit) or 50, 1, MAX_OUTPUT)
+	local entries = {}
+	local startIndex = math.max(1, #outputBuffer - limit + 1)
+	for index = startIndex, #outputBuffer do
+		table.insert(entries, outputBuffer[index])
+	end
+	return { count = #entries, entries = entries }
+end
+
+-- ===========================================================================
+-- Status UI (no URL or token fields by design)
+-- ===========================================================================
+
+local toolbar = plugin:CreateToolbar(PLUGIN_NAME)
+local toggleButton = toolbar:CreateButton(
+    "Arena Studio Connecter",
+    "Status der automatischen Arena-Verbindung anzeigen",
+    "rbxasset://textures/ui/GuiImagePlaceholder.png"
+)
+
+local widgetInfo = DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, false, 390, 245, 340, 220)
+local widget = plugin:CreateDockWidgetPluginGui("ArenaStudioConnecterWidget", widgetInfo)
+widget.Title = "Arena Studio Connecter"
+
+local root = Instance.new("Frame")
+root.Size = UDim2.fromScale(1, 1)
+root.BackgroundColor3 = Color3.fromRGB(8, 15, 32)
+root.BorderSizePixel = 0
+root.Parent = widget
+
+local accent = Instance.new("Frame")
+accent.Size = UDim2.new(1, 0, 0, 3)
+accent.BackgroundColor3 = Color3.fromRGB(104, 83, 235)
+accent.BorderSizePixel = 0
+accent.Parent = root
+
+local title = Instance.new("TextLabel")
+title.Position = UDim2.fromOffset(18, 18)
+title.Size = UDim2.new(1, -36, 0, 24)
+title.BackgroundTransparency = 1
+title.Text = "Arena Studio Connecter"
+title.TextColor3 = Color3.fromRGB(238, 243, 255)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.GothamBold
+title.TextSize = 17
+title.Parent = root
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Position = UDim2.fromOffset(18, 43)
+subtitle.Size = UDim2.new(1, -36, 0, 18)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "Automatische Verbindung - keine Zugangsdaten noetig"
+subtitle.TextColor3 = Color3.fromRGB(104, 119, 151)
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextSize = 10
+subtitle.Parent = root
+
+local statusCard = Instance.new("Frame")
+statusCard.Position = UDim2.fromOffset(18, 76)
+statusCard.Size = UDim2.new(1, -36, 0, 82)
+statusCard.BackgroundColor3 = Color3.fromRGB(13, 24, 49)
+statusCard.BorderSizePixel = 0
+statusCard.Parent = root
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 10)
+statusCorner.Parent = statusCard
+local statusStroke = Instance.new("UIStroke")
+statusStroke.Color = Color3.fromRGB(37, 58, 99)
+statusStroke.Transparency = 0.35
+statusStroke.Parent = statusCard
+
+local statusDot = Instance.new("Frame")
+statusDot.Position = UDim2.fromOffset(14, 16)
+statusDot.Size = UDim2.fromOffset(10, 10)
+statusDot.BackgroundColor3 = Color3.fromRGB(251, 191, 92)
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusCard
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = statusDot
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Position = UDim2.fromOffset(34, 10)
+statusLabel.Size = UDim2.new(1, -47, 0, 58)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Suche die Arena Studio Connecter App ..."
+statusLabel.TextColor3 = Color3.fromRGB(170, 184, 214)
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextYAlignment = Enum.TextYAlignment.Top
+statusLabel.TextWrapped = true
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 11
+statusLabel.Parent = statusCard
+
+local retryButton = Instance.new("TextButton")
+retryButton.Position = UDim2.new(0, 18, 1, -56)
+retryButton.Size = UDim2.new(1, -36, 0, 34)
+retryButton.BackgroundColor3 = Color3.fromRGB(75, 68, 180)
+retryButton.BorderSizePixel = 0
+retryButton.Text = "Jetzt erneut verbinden"
+retryButton.TextColor3 = Color3.fromRGB(245, 247, 255)
+retryButton.Font = Enum.Font.GothamBold
+retryButton.TextSize = 11
+retryButton.Parent = root
+local retryCorner = Instance.new("UICorner")
+retryCorner.CornerRadius = UDim.new(0, 8)
+retryCorner.Parent = retryButton
+
+local COLOR_OK = Color3.fromRGB(53, 213, 154)
+local COLOR_ERR = Color3.fromRGB(251, 113, 133)
+local COLOR_IDLE = Color3.fromRGB(251, 191, 92)
+
+local function setStatus(message: string, color: Color3)
+    statusLabel.Text = message
+    statusLabel.TextColor3 = color
+    statusDot.BackgroundColor3 = color
+end
+
+-- ===========================================================================
+-- Automatic connection loop
+-- ===========================================================================
+
+local function handleCommand(command: any)
+    local handler = handlers[command.action]
+    local payload
+    if not handler then
+        payload = { id = command.id, ok = false, error = "Unbekannte Aktion: " .. tostring(command.action) }
+    else
+        local ok, result = pcall(handler, command.params or {})
+        if ok then
+            payload = { id = command.id, ok = true, result = result }
+        else
+            payload = { id = command.id, ok = false, error = tostring(result) }
+        end
+    end
+
+    state.commandsHandled += 1
+    local sent, err = request("POST", "/studio/result", payload)
+    if not sent then
+        warn(string.format("[%s] Ergebnis konnte nicht gesendet werden: %s", PLUGIN_NAME, tostring(err)))
+    end
+end
+
+local function handshake(): (boolean, any)
+    local account = readAccount()
+    return request("POST", "/studio/handshake", {
+        clientId = state.clientId,
+        name = "Roblox Studio",
+        version = PLUGIN_VERSION,
+        place = tostring(game.PlaceId),
+        placeId = game.PlaceId,
+        placeName = game.Name,
+        gameId = game.GameId,
+        placeVersion = game.PlaceVersion,
+        studioVersion = version(),
+        accountUserId = account.userId,
+        accountName = account.username,
+        accountDisplayName = account.displayName,
+        isEdit = RunService:IsEdit(),
+        isRunning = RunService:IsRunning(),
+    })
+end
+
+local function connectionLoop()
+    while state.running do
+        if state.token == "" then
+            state.connected = false
+            setStatus("Suche die Connecter App ...\nURL und Token werden automatisch geladen.", COLOR_IDLE)
+            local found, session = discoverSession()
+            if not found or not session or not session.ok then
+                state.lastError = tostring(session)
+                setStatus("App nicht erreichbar.\nStarte Arena Studio Connecter und erlaube HTTP Requests.", COLOR_ERR)
+                task.wait(RECONNECT_WAIT)
+                continue
+            end
+            state.url = tostring(session.url or "")
+            state.token = tostring(session.token or "")
+            state.sessionId = tostring(session.sessionId or "")
+        end
+
+        setStatus("Verbinde automatisch mit der lokalen Bridge ...", COLOR_IDLE)
+        local accepted, response = handshake()
+        if not accepted then
+            state.token = ""
+            state.connected = false
+            state.lastError = tostring(response)
+            setStatus("Verbindung fehlgeschlagen.\nDie App versucht es automatisch erneut.", COLOR_ERR)
+            task.wait(RECONNECT_WAIT)
+            continue
+        end
+
+        state.connected = true
+        setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
+
+        while state.running and state.token ~= "" do
+            local ok, pollResponse = request("GET", "/studio/poll")
+            if not ok then
+                state.connected = false
+                state.token = ""
+                state.lastError = tostring(pollResponse)
+                setStatus("Verbindung unterbrochen.\nAutomatischer Neuaufbau laeuft ...", COLOR_ERR)
+                break
+            end
+
+            if pollResponse.command then
+                setStatus(string.format("Arena fuehrt aus: %s", tostring(pollResponse.command.action)), COLOR_OK)
+                handleCommand(pollResponse.command)
+                setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
+            else
+                task.wait(POLL_IDLE_WAIT)
+            end
+        end
+        task.wait(RECONNECT_WAIT)
+    end
+end
+
+retryButton.MouseButton1Click:Connect(function()
+    state.token = ""
+    state.connected = false
+    setStatus("Manueller Neuaufbau gestartet ...", COLOR_IDLE)
+end)
+
+toggleButton.Click:Connect(function()
+    widget.Enabled = not widget.Enabled
+end)
+
+plugin.Unloading:Connect(function()
+    state.running = false
+end)
+
+task.spawn(connectionLoop)
+print(string.format("[%s] Plugin v%s geladen - automatische Verbindung aktiv.", PLUGIN_NAME, PLUGIN_VERSION))

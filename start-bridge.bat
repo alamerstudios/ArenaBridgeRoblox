@@ -1,9 +1,9 @@
 @echo off
 setlocal
-title NexusAI Bridge
+title Arena Studio Connecter
 
 rem ===========================================================================
-rem  NexusAI Bridge - Windows Launcher
+rem  Arena Studio Connecter - Windows Launcher
 rem
 rem  Startet die Bridge. URL und Token werden bei JEDEM Start neu erzeugt und
 rem  in der ---BRIDGE--- Box ausgegeben. Es gibt keinen festen Token.
@@ -52,6 +52,6 @@ set "EXITCODE=%ERRORLEVEL%"
 
 :done
 echo.
-echo NexusAI Bridge beendet (Exit-Code %EXITCODE%).
-if not "%NEXUSAI_NO_PAUSE%"=="1" pause
+echo Arena Studio Connecter beendet (Exit-Code %EXITCODE%).
+if not "%ARENA_STUDIO_NO_PAUSE%"=="1" pause
 exit /b %EXITCODE%
