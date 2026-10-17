@@ -7,6 +7,22 @@ Die App startet die lokale HTTP/MCP-Bridge, installiert das Studio-Plugin automa
 erstellt einen temporären Cloudflare-HTTPS-Tunnel und erzeugt für jede offene Place einen
 fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** eingetragen werden.
 
+## Download
+
+<p align="center">
+  <a href="./downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe?raw=1">
+    <img src="docs/assets/download-windows.svg" width="372" alt="Arena Studio Connecter als portable Windows-x64-EXE herunterladen" />
+  </a>
+  <br />
+  <sub>Windows 10/11 · 64 Bit · portable · keine Installation erforderlich</sub>
+</p>
+
+<p align="center">
+  <a href="./downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
+  ·
+  <a href="#windows-exe-verwenden">Schnellstart</a>
+</p>
+
 ## Highlights
 
 - Dunkelblaue native Desktop-Oberfläche mit Animationen
@@ -186,7 +202,8 @@ npm install
 npm test                    # Unit- und End-to-End-Tests
 npm start                   # Bridge ohne Desktop-Fenster
 npm run desktop             # Electron-App im Entwicklungsmodus
-npm run dist:standalone     # portable Windows-x64-Einzeldatei-EXE
+npm run dist:standalone     # vollständige Windows-x64-Einzeldatei-EXE
+npm run dist:download       # komprimierte Download-EXE für GitHub
 npm run dist:win            # alternativ: Electron Installer + portable EXE
 ```
 
@@ -198,8 +215,15 @@ verifiziert die eingebetteten PE-Dateien per SHA-256 und cross-kompiliert anschl
 release/Arena-Studio-Connecter-Portable-2.0.0-x64.exe
 ```
 
+`npm run dist:download` verpackt diese Datei zusätzlich als kleinere, selbstentpackende
+Windows-EXE unter `downloads/`. Beim Start wird die vollständige App nur temporär entpackt,
+ausgeführt und danach wieder aufgeräumt; eine Installation ist weiterhin nicht nötig. Diese
+Datei ist das Ziel des Download-Buttons am Anfang dieser README.
+
 Der alternative Electron-Build lädt ebenfalls cloudflared und erzeugt zusätzlich
-`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Release-Binaries sind absichtlich gitignoriert.
+`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Die großen, unkomprimierten Build-Ausgaben
+unter `release/` sind gitignoriert; nur die für den README-Download optimierte EXE unter
+`downloads/` wird versioniert.
 
 ### Projektstruktur
 
@@ -215,6 +239,8 @@ desktop/
 standalone/
   main.js                 kompakter Bun-/WebView2-Host für die portable EXE
   windowsSettingsStore.js DPAPI- und Autostart-Integration ohne Electron
+downloads/
+  komprimierte, direkt startbare Windows-EXE für den README-Download
 src/
   server.js               HTTP-Server, Routing und Auth
   core/                   Token, Session, Queue, Prompt, Logging

@@ -17,7 +17,8 @@
     "dist:win": "npm run prepare:cloudflared && electron-builder --win nsis portable --x64",
     "dist:portable": "npm run prepare:cloudflared && electron-builder --win portable --x64",
     "prepare:standalone": "node scripts/prepare-standalone.mjs",
-    "dist:standalone": "node scripts/build-standalone.mjs"
+    "dist:standalone": "node scripts/build-standalone.mjs",
+    "dist:download": "npm run dist:standalone && node scripts/build-download-exe.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

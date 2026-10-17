@@ -44,9 +44,18 @@ let discoveryState = { status: 'starting', message: 'Studio-Erkennung wird gesta
 let pluginState = { status: 'starting', installed: false, message: 'Plugin wird installiert …' };
 
 fs.mkdirSync(runtimeDir, { recursive: true });
+const launcherCandidate = String(process.env.ASC_LAUNCHER_PATH ?? '').replace(/^"|"$/g, '');
+const launchExecutable = launcherCandidate
+  && path.isAbsolute(launcherCandidate)
+  && path.extname(launcherCandidate).toLowerCase() === '.exe'
+  && fs.existsSync(launcherCandidate)
+  ? launcherCandidate
+  : process.execPath;
 const settings = new WindowsSettingsStore({
   filePath: path.join(appData, 'settings.json'),
-  executablePath: process.execPath,
+  // A compressed download wrapper runs the app from a temporary directory.
+  // In that case autostart must point back to the persistent wrapper itself.
+  executablePath: launchExecutable,
 });
 
 function materialize(asset, destination, minimumSize = 1) {
