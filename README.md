@@ -10,7 +10,7 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 ## Download
 
 <p align="center">
-  <a href="./downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe?raw=1">
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.0/downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe">
     <img src="docs/assets/download-windows.svg" width="372" alt="Arena Studio Connecter als portable Windows-x64-EXE herunterladen" />
   </a>
   <br />
@@ -18,7 +18,9 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 </p>
 
 <p align="center">
-  <a href="./downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.0/downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
+  ·
+  <a href="https://github.com/alamerstudios/ArenaBridgeRoblox/releases/tag/v2.0.0">Release-Details</a>
   ·
   <a href="#windows-exe-verwenden">Schnellstart</a>
 </p>
