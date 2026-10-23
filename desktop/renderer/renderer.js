@@ -177,6 +177,35 @@ function renderPlaceCard(client, index, tunnelOnline) {
   return card;
 }
 
+function formatSecondsAgo(timestamp, now) {
+  if (!timestamp) return null;
+  const seconds = Math.max(0, Math.round(((now ?? Date.now()) - timestamp) / 1000));
+  if (seconds < 2) return 'gerade eben';
+  if (seconds < 60) return `vor ${seconds} Sekunden`;
+  const minutes = Math.round(seconds / 60);
+  return minutes === 1 ? 'vor 1 Minute' : `vor ${minutes} Minuten`;
+}
+
+function discoveryOf(state) {
+  return state.plugin?.discovery ?? {};
+}
+
+// Turns raw plugin-contact telemetry into one actionable sentence, so an
+// empty Place list always explains which step of the chain is still missing.
+function emptyDiagnosis(state) {
+  const discovery = discoveryOf(state);
+  if (discovery.status === 'error') {
+    return text(discovery.message, 'Die Plugin-Erkennung konnte nicht starten. Details stehen unter Einstellungen → Studio Plugin.');
+  }
+  if (discovery.lastServedAt) {
+    return 'Das Studio-Plugin hat diese App bereits gefunden, die Place meldet sich aber noch nicht an. Öffne in Roblox Studio über die Toolbar „Arena Studio Connecter“ - dort steht der genaue Grund (z. B. Allow HTTP Requests).';
+  }
+  if (discovery.lastRequestAt) {
+    return 'Ein Plugin hat die App kontaktiert, aber noch keine Session erhalten. Warte kurz, bis die lokale Bridge bereit ist, und versuche es danach im Studio-Plugin erneut.';
+  }
+  return 'Noch kein Kontakt aus Roblox Studio: Studio nach dem ersten App-Start einmal komplett neu starten und eine Place öffnen (nicht auf der Startseite bleiben).';
+}
+
 function renderPlaces(state) {
   const places = state.places ?? [];
   const tunnelOnline = state.tunnel?.status === 'online';
@@ -187,7 +216,10 @@ function renderPlaces(state) {
   byId('place-grid').classList.toggle('hidden', places.length === 0);
   byId('session-subtitle').textContent = places.length
     ? `${places.length} ${places.length === 1 ? 'Place ist' : 'Places sind'} gerade verbunden`
-    : 'Suche nach geöffneten Places …';
+    : (discoveryOf(state).status === 'error'
+      ? 'Plugin-Erkennung fehlgeschlagen - siehe Einstellungen'
+      : (discoveryOf(state).lastServedAt ? 'Plugin gefunden - warte auf die Studio-Anmeldung …' : 'Suche nach geöffneten Places …'));
+  byId('empty-diagnosis').textContent = emptyDiagnosis(state);
 
   const signature = JSON.stringify({
     tunnelOnline,
@@ -218,25 +250,32 @@ function renderServices(state) {
   const bridgeStatus = state.bridge?.status ?? 'starting';
   const tunnelStatus = state.tunnel?.status ?? 'starting';
   const pluginStatus = state.plugin?.status ?? 'starting';
+  const discovery = discoveryOf(state);
+  const discoveryFailed = discovery.status === 'error';
   const connectedPlaces = state.places?.length ?? 0;
 
   setStatus('bridge-dot', 'bridge-label', bridgeStatus, bridgeStatus === 'online' ? 'Online' : text(state.bridge?.message, 'Startet …'));
   setStatus('tunnel-dot', 'tunnel-label', tunnelStatus, tunnelStatus === 'online' ? 'HTTPS online' : text(state.tunnel?.message, 'Startet …'));
-  setStatus('plugin-dot', 'plugin-label', pluginStatus,
-    connectedPlaces ? `${connectedPlaces} ${connectedPlaces === 1 ? 'Place verbunden' : 'Places verbunden'}` : (pluginStatus === 'installed' ? 'Installiert' : text(state.plugin?.message, 'Prüfe …')));
+  setStatus('plugin-dot', 'plugin-label', discoveryFailed ? 'error' : pluginStatus,
+    discoveryFailed
+      ? 'Erkennung fehlgeschlagen'
+      : (connectedPlaces ? `${connectedPlaces} ${connectedPlaces === 1 ? 'Place verbunden' : 'Places verbunden'}` : (pluginStatus === 'installed' ? 'Installiert' : text(state.plugin?.message, 'Prüfe …'))));
 
   const allCoreOnline = bridgeStatus === 'online' && tunnelStatus === 'online';
   const heading = byId('heading-status');
   const ring = heading.querySelector('.pulse-ring');
   const title = heading.querySelector('strong');
   const detail = heading.querySelector('small');
-  ring.className = `pulse-ring ${allCoreOnline ? 'online' : (bridgeStatus === 'error' || tunnelStatus === 'error' ? 'error' : '')}`;
+  ring.className = `pulse-ring ${allCoreOnline && !discoveryFailed ? 'online' : (bridgeStatus === 'error' || tunnelStatus === 'error' || discoveryFailed ? 'error' : '')}`;
   if (allCoreOnline && connectedPlaces) {
     title.textContent = 'Bereit für Arena Agent';
     detail.textContent = `${connectedPlaces} aktive Studio-${connectedPlaces === 1 ? 'Session' : 'Sessions'}`;
+  } else if (discoveryFailed) {
+    title.textContent = 'Aktion erforderlich';
+    detail.textContent = 'Plugin-Erkennung prüfen';
   } else if (allCoreOnline) {
     title.textContent = 'Warte auf Roblox Studio';
-    detail.textContent = 'Bridge und Tunnel sind bereit';
+    detail.textContent = discovery.lastServedAt ? 'Plugin gefunden - Place meldet sich an' : 'Bridge und Tunnel sind bereit';
   } else if (bridgeStatus === 'error' || tunnelStatus === 'error') {
     title.textContent = 'Aktion erforderlich';
     detail.textContent = bridgeStatus === 'error' ? 'Lokale Bridge prüfen' : 'Tunnel erneut verbinden';
@@ -264,8 +303,20 @@ function renderSettings(state) {
   byId('launch-at-login').checked = settings.launchAtLogin === true;
 
   const plugin = state.plugin ?? {};
-  setBadge(byId('plugin-badge'), plugin.installed ? (plugin.connected ? 'VERBUNDEN' : 'INSTALLIERT') : 'FEHLER', plugin.installed ? 'online' : 'error');
+  const discovery = plugin.discovery ?? {};
+  const discoveryFailed = discovery.status === 'error';
+  setBadge(byId('plugin-badge'), discoveryFailed ? 'ERKENNUNG FEHLER' : (plugin.installed ? (plugin.connected ? 'VERBUNDEN' : 'INSTALLIERT') : 'FEHLER'), discoveryFailed ? 'error' : (plugin.installed ? 'online' : 'error'));
   byId('plugin-detail-status').textContent = text(plugin.message, 'Unbekannt');
+  byId('discovery-detail-status').textContent = discoveryFailed
+    ? text(discovery.message, 'Fehlgeschlagen')
+    : (discovery.listening || discovery.status === 'online'
+      ? `Bereit auf Port ${text(discovery.port, '32192')}`
+      : text(discovery.message, 'Startet …'));
+  byId('discovery-last-contact').textContent = discovery.lastServedAt
+    ? `Session geladen ${formatSecondsAgo(discovery.lastServedAt, state.now)}`
+    : (discovery.lastRequestAt
+      ? `Kontakt ${formatSecondsAgo(discovery.lastRequestAt, state.now)}, noch keine Session`
+      : 'Noch kein Kontakt aus Roblox Studio');
   byId('plugin-path').textContent = text(plugin.path);
 
   const tunnel = state.tunnel ?? {};
@@ -383,7 +434,7 @@ function wireEvents() {
 }
 
 const demoState = {
-  app: { version: '2.0.0' },
+  app: { version: '2.0.1' },
   bridge: { status: 'online', message: 'Lokale Bridge läuft.' },
   tunnel: { status: 'online', url: 'https://studio-arena-demo.trycloudflare.com', message: 'Cloudflare-Tunnel ist online.' },
   plugin: { status: 'installed', installed: true, connected: true, connectedPlaces: 2, message: 'Plugin ist installiert und aktuell.', path: 'C:\\Users\\Arena\\AppData\\Local\\Roblox\\Plugins\\ArenaStudioConnecter.rbxmx' },

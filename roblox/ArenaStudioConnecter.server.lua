@@ -6,8 +6,14 @@
     sich selbst. URL und Session-Token werden ausschließlich über einen separaten,
     nur lokal erreichbaren Discovery-Port geladen und niemals gespeichert.
 
-    Die lokale HTTP-Freigabe wird vom Plugin automatisch aktiviert. Roblox Studio
-    stellt für lokale Desktop-Bridges keine separate Nicht-HTTP-IPC-Schnittstelle bereit.
+    WICHTIG: Roblox erlaubt Plugins aus Sicherheitsgründen nicht, die
+    HTTP-Freigabe einer Place selbst umzuschalten (diese Einstellung hat
+    LocalUserSecurity). Das Plugin darf diese Einstellung deshalb weder lesen
+    noch schreiben - schon der Zugriff darauf lässt die Verbindung scheitern,
+    bevor überhaupt eine Anfrage gesendet wurde. Stattdessen stellt das Plugin
+    die lokale Anfrage direkt und meldet einen eventuellen Freigabe-Hinweis von
+    Roblox sichtbar im Status-Widget. Sobald die Freigabe vorliegt, verbindet
+    sich die Place automatisch neu.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -20,7 +26,7 @@ local Players = game:GetService("Players")
 local UserService = game:GetService("UserService")
 
 local PLUGIN_NAME = "Arena Studio Connecter"
-local PLUGIN_VERSION = "2.0.0"
+local PLUGIN_VERSION = "2.0.1"
 local DISCOVERY_URL = "http://127.0.0.1:32192/v1/session"
 local POLL_IDLE_WAIT = 0.25
 local RECONNECT_WAIT = 2.5
@@ -31,8 +37,10 @@ local state = {
     sessionId = "",
     connected = false,
     running = true,
+    loopRunning = false,
     clientId = HttpService:GenerateGUID(false),
     lastError = nil :: string?,
+    lastProblemKey = "",
     commandsHandled = 0,
 }
 
@@ -66,26 +74,59 @@ local function decodeResponse(response: any): (boolean, any)
     return true, decoded
 end
 
-local function ensureHttpEnabled(): (boolean, string?)
-    if HttpService.HttpEnabled then
-        return true, nil
+--[[
+    Verbindungsprobleme verständlich beschreiben.
+
+    Die Abfrage erfolgt ausschließlich anhand der Fehlermeldung der echten
+    HTTP-Anfrage. Die geschützte Place-Einstellung für HTTP Requests wird vom
+    Plugin bewusst nie berührt: Sie hat LocalUserSecurity, schon der Lesezugriff
+    kann für ein Plugin fehlschlagen und ein Schreibzugriff ist immer verboten.
+    Genau dieser Zugriff hat in Version 2.0.0 jede Verbindung verhindert.
+]]
+local function describeConnectionProblem(detail: any): any
+    local text = string.lower(tostring(detail or ""))
+
+    -- Eine abgelehnte Bridge-Session (z. B. nach einem Token-Wechsel) heilt
+    -- sich selbst, weil die Session danach neu geladen wird.
+    if string.find(text, "http 401", 1, true) or string.find(text, "http 403", 1, true) or string.find(text, "http 429", 1, true) then
+        return {
+            key = "session-abgelehnt",
+            actionRequired = false,
+            message = "Die Bridge hat die Session abgelehnt.\nEine neue Session wird automatisch geladen ...",
+        }
     end
 
-    local ok, reason = pcall(function()
-        HttpService.HttpEnabled = true
-    end)
-    if ok and HttpService.HttpEnabled then
-        return true, nil
+    if string.find(text, "http requests are not enabled", 1, true)
+        or string.find(text, "enable via game settings", 1, true)
+        or string.find(text, "requests are not enabled", 1, true) then
+        return {
+            key = "http-aus",
+            actionRequired = true,
+            message = "HTTP Requests sind fuer diese Place aus.\nEinmalig einschalten: Datei > Experience Settings > Security > Allow HTTP Requests.\nDanach verbindet sich die Place automatisch.",
+        }
     end
-    return false, "Roblox Studio konnte die lokale HTTP-Freigabe nicht automatisch aktivieren: " .. tostring(reason)
+
+    if string.find(text, "permission", 1, true)
+        or string.find(text, "access denied", 1, true)
+        or string.find(text, "not allowed to access", 1, true) then
+        return {
+            key = "http-berechtigung",
+            actionRequired = true,
+            message = "Studio hat den HTTP-Zugriff des Plugins abgelehnt.\nErlaube in der Anfrage bzw. unter Plugins > Manage Plugins den Zugriff auf 127.0.0.1.\nDanach verbindet sich die Place automatisch.",
+        }
+    end
+
+    return {
+        key = "app-nicht-erreichbar",
+        actionRequired = false,
+        message = "Die Connecter-App wurde noch nicht gefunden.\nStarte die Arena Studio Connecter EXE - die Place erscheint dann automatisch.",
+    }
 end
 
 local function discoverSession(): (boolean, any)
-    local enabled, enableError = ensureHttpEnabled()
-    if not enabled then
-        return false, enableError
-    end
-
+    -- Direkt anfragen: Die lokale Verbindung braucht keine Vorprüfung einer
+    -- geschützten Eigenschaft. Ein eventueller Freigabe-Hinweis von Roblox
+    -- kommt als Fehler dieser Anfrage zurück und wird oben verständlich erklärt.
     local ok, response = pcall(function()
         return HttpService:RequestAsync({
             Url = DISCOVERY_URL,
@@ -96,16 +137,24 @@ local function discoverSession(): (boolean, any)
     if not ok then
         return false, tostring(response)
     end
-    return decodeResponse(response)
+
+    local decodedOk, session = decodeResponse(response)
+    if not decodedOk then
+        return false, session
+    end
+    if typeof(session) ~= "table" or session.ok ~= true then
+        local reason = typeof(session) == "table" and session.error or nil
+        return false, "Plugin-Erkennung abgelehnt: " .. tostring(reason or "unbekannte Antwort")
+    end
+    if typeof(session.url) ~= "string" or session.url == "" or typeof(session.token) ~= "string" or session.token == "" then
+        return false, "Plugin-Erkennung lieferte eine unvollständige Session"
+    end
+    return true, session
 end
 
 local function request(method: string, requestPath: string, body: any?): (boolean, any)
     if state.url == "" or state.token == "" then
         return false, "Bridge-Session ist noch nicht verfuegbar"
-    end
-    local enabled, enableError = ensureHttpEnabled()
-    if not enabled then
-        return false, enableError
     end
 
     local options = {
@@ -507,7 +556,7 @@ local toggleButton = toolbar:CreateButton(
     "rbxasset://textures/ui/GuiImagePlaceholder.png"
 )
 
-local widgetInfo = DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, false, 390, 245, 340, 220)
+local widgetInfo = DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, false, 390, 285, 340, 240)
 local widget = plugin:CreateDockWidgetPluginGui("ArenaStudioConnecterWidget", widgetInfo)
 widget.Title = "Arena Studio Connecter"
 
@@ -547,7 +596,7 @@ subtitle.Parent = root
 
 local statusCard = Instance.new("Frame")
 statusCard.Position = UDim2.fromOffset(18, 76)
-statusCard.Size = UDim2.new(1, -36, 0, 82)
+statusCard.Size = UDim2.new(1, -36, 0, 112)
 statusCard.BackgroundColor3 = Color3.fromRGB(13, 24, 49)
 statusCard.BorderSizePixel = 0
 statusCard.Parent = root
@@ -571,7 +620,7 @@ dotCorner.Parent = statusDot
 
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Position = UDim2.fromOffset(34, 10)
-statusLabel.Size = UDim2.new(1, -47, 0, 58)
+statusLabel.Size = UDim2.new(1, -47, 0, 90)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Suche die Arena Studio Connecter App ..."
 statusLabel.TextColor3 = Color3.fromRGB(170, 184, 214)
@@ -604,6 +653,30 @@ local function setStatus(message: string, color: Color3)
     statusLabel.Text = message
     statusLabel.TextColor3 = color
     statusDot.BackgroundColor3 = color
+end
+
+-- Zeigt ein Verbindungsproblem genau einmal pro neuer Ursache an (Widget +
+-- Output), damit weder der Bildschirm noch die Konsole im 2,5-Sekunden-Takt
+-- der Wiederverbindungsversuche geflutet wird.
+local function reportProblem(problem: any, detail: any)
+    state.connected = false
+    state.lastError = tostring(detail)
+    setStatus(problem.message, COLOR_ERR)
+
+    if problem.key ~= state.lastProblemKey then
+        state.lastProblemKey = problem.key
+        warn(string.format("[%s] Verbindung wartet (%s): %s", PLUGIN_NAME, tostring(problem.key), tostring(detail)))
+        -- Nur wenn der Nutzer wirklich etwas tun muss, das Widget einmalig
+        -- öffnen. Eine noch nicht gestartete EXE ist dagegen Normalbetrieb.
+        if problem.actionRequired then
+            widget.Enabled = true
+        end
+    end
+end
+
+local function clearProblem()
+    state.lastProblemKey = ""
+    state.lastError = nil
 end
 
 -- ===========================================================================
@@ -651,63 +724,91 @@ local function handshake(): (boolean, any)
     })
 end
 
-local function connectionLoop()
-    while state.running do
-        if state.token == "" then
-            state.connected = false
-            setStatus("Suche die Connecter App ...\nURL und Token werden automatisch geladen.", COLOR_IDLE)
-            local found, session = discoverSession()
-            if not found or not session or not session.ok then
-                state.lastError = tostring(session)
-                setStatus("App nicht erreichbar.\nStarte den Connecter; lokale Freigabe erfolgt automatisch.", COLOR_ERR)
-                task.wait(RECONNECT_WAIT)
-                continue
-            end
-            state.url = tostring(session.url or "")
-            state.token = tostring(session.token or "")
-            state.sessionId = tostring(session.sessionId or "")
+-- Ein kompletter Verbindungszyklus: Session entdecken, Handshake, danach
+-- Befehle pollen, bis die Verbindung abreißt oder das Token verworfen wird.
+local function runConnectedSession()
+    if state.token == "" then
+        state.connected = false
+        setStatus("Suche die Connecter App ...\nURL und Token werden automatisch geladen.", COLOR_IDLE)
+        local found, session = discoverSession()
+        if not found then
+            reportProblem(describeConnectionProblem(session), session)
+            return
+        end
+        state.url = tostring(session.url or "")
+        state.token = tostring(session.token or "")
+        state.sessionId = tostring(session.sessionId or "")
+    end
+
+    setStatus("Verbinde automatisch mit der lokalen Bridge ...", COLOR_IDLE)
+    local accepted, response = handshake()
+    if not accepted then
+        state.token = ""
+        reportProblem(describeConnectionProblem(response), response)
+        return
+    end
+
+    state.connected = true
+    clearProblem()
+    setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
+
+    while state.running and state.token ~= "" do
+        local ok, pollResponse = request("GET", "/studio/poll")
+        if not ok then
+            state.token = ""
+            reportProblem(describeConnectionProblem(pollResponse), pollResponse)
+            return
         end
 
-        setStatus("Verbinde automatisch mit der lokalen Bridge ...", COLOR_IDLE)
-        local accepted, response = handshake()
-        if not accepted then
+        if pollResponse.command then
+            setStatus(string.format("Arena fuehrt aus: %s", tostring(pollResponse.command.action)), COLOR_OK)
+            -- Ein fehlerhafter Befehl darf die Verbindung nicht abreißen lassen.
+            local handled, handleError = pcall(handleCommand, pollResponse.command)
+            if not handled then
+                warn(string.format("[%s] Befehl konnte nicht verarbeitet werden: %s", PLUGIN_NAME, tostring(handleError)))
+            end
+            setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
+        else
+            task.wait(POLL_IDLE_WAIT)
+        end
+    end
+end
+
+-- Das Herzstück der Reparatur: Jeder Zyklus läuft geschützt. Ein einzelner
+-- Fehler (wie früher der verbotene Zugriff auf die HTTP-Einstellung) beendet
+-- nur diesen Versuch - die Schleife selbst kann nie mehr lautlos sterben.
+-- Dadurch verbindet sich die Place von selbst, sobald die EXE startet oder
+-- eine Freigabe nachträglich erteilt wurde, ganz ohne Studio-Neustart.
+local function connectionLoop()
+    state.loopRunning = true
+    while state.running do
+        local ok, err = pcall(runConnectedSession)
+        if not ok then
             state.token = ""
             state.connected = false
-            state.lastError = tostring(response)
-            setStatus("Verbindung fehlgeschlagen.\nDie App versucht es automatisch erneut.", COLOR_ERR)
+            reportProblem(describeConnectionProblem(err), err)
+        end
+        if state.running then
             task.wait(RECONNECT_WAIT)
-            continue
         end
+    end
+    state.loopRunning = false
+    state.connected = false
+end
 
-        state.connected = true
-        setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
-
-        while state.running and state.token ~= "" do
-            local ok, pollResponse = request("GET", "/studio/poll")
-            if not ok then
-                state.connected = false
-                state.token = ""
-                state.lastError = tostring(pollResponse)
-                setStatus("Verbindung unterbrochen.\nAutomatischer Neuaufbau laeuft ...", COLOR_ERR)
-                break
-            end
-
-            if pollResponse.command then
-                setStatus(string.format("Arena fuehrt aus: %s", tostring(pollResponse.command.action)), COLOR_OK)
-                handleCommand(pollResponse.command)
-                setStatus(string.format("Verbunden - Place %s\nBefehle verarbeitet: %d", tostring(game.PlaceId), state.commandsHandled), COLOR_OK)
-            else
-                task.wait(POLL_IDLE_WAIT)
-            end
-        end
-        task.wait(RECONNECT_WAIT)
+local function ensureConnectionLoop()
+    if not state.loopRunning then
+        task.spawn(connectionLoop)
     end
 end
 
 retryButton.MouseButton1Click:Connect(function()
     state.token = ""
     state.connected = false
+    clearProblem()
     setStatus("Manueller Neuaufbau gestartet ...", COLOR_IDLE)
+    -- Falls die Schleife je beendet wurde, startet der Button sie wirklich neu.
+    ensureConnectionLoop()
 end)
 
 toggleButton.Click:Connect(function()
@@ -718,5 +819,5 @@ plugin.Unloading:Connect(function()
     state.running = false
 end)
 
-task.spawn(connectionLoop)
+ensureConnectionLoop()
 print(string.format("[%s] Plugin v%s geladen - automatische Verbindung aktiv.", PLUGIN_NAME, PLUGIN_VERSION))

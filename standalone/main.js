@@ -23,7 +23,7 @@ import { installStudioPlugin } from '../desktop/pluginInstaller.js';
 import { WindowsSettingsStore } from './windowsSettingsStore.js';
 import { ensureCloudflared } from './cloudflaredBootstrap.js';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 const ARENA_URL = 'https://arena.ai/agent';
 const appData = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Arena Studio Connecter');
 const runtimeDir = path.join(appData, 'runtime');
@@ -76,7 +76,7 @@ function snapshot() {
       tokenMasked: bridge?.session ? `${bridge.session.token.slice(0, 8)}••••${bridge.session.token.slice(-4)}` : null,
     },
     tunnel: tunnel?.snapshot() ?? tunnelBootstrapState,
-    plugin: { ...pluginState, connected: places.length > 0, connectedPlaces: places.length, discovery: discoveryState },
+    plugin: { ...pluginState, connected: places.length > 0, connectedPlaces: places.length, discovery: { ...discoveryState, ...(discovery?.diagnostics?.() ?? {}) } },
     places,
     settings: settings.publicState(),
     now: Date.now(),

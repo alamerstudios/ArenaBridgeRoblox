@@ -7,10 +7,14 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Unsupported package version "${version}".`);
+const fileVersion = `${version}.0`;
+const exeName = `Arena-Studio-Connecter-Portable-${version}-x64.exe`;
 const release = path.join(root, 'release');
 const unbranded = path.join(release, '.Arena-Studio-Connecter-unbranded.exe');
 const brandedRuntime = path.join(release, '.Arena-Studio-Connecter-runtime.exe');
-const output = path.join(release, 'Arena-Studio-Connecter-Portable-2.0.0-x64.exe');
+const output = path.join(release, exeName);
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const node = process.execPath;
 let runtimeBackup = null;
@@ -35,11 +39,11 @@ function resourceArguments(input, destination) {
     '--icon', path.join(root, 'desktop/assets/icon.ico'),
     '--company-name', 'Arena Studio',
     '--file-description', 'Arena Agent bridge for Roblox Studio',
-    '--file-version', '2.0.0.0',
+    '--file-version', fileVersion,
     '--internal-name', 'Arena Studio Connecter',
-    '--original-filename', 'Arena-Studio-Connecter-Portable-2.0.0-x64.exe',
+    '--original-filename', exeName,
     '--product-name', 'Arena Studio Connecter',
-    '--product-version', '2.0.0.0',
+    '--product-version', fileVersion,
   ];
 }
 
@@ -62,7 +66,7 @@ try {
       `--windows-icon=${path.join(root, 'desktop/assets/icon.ico')}`,
       '--windows-title=Arena Studio Connecter',
       '--windows-publisher=Arena Studio',
-      '--windows-version=2.0.0.0',
+      `--windows-version=${fileVersion}`,
       '--windows-description=Arena Agent bridge for Roblox Studio',
     ]);
   } else {

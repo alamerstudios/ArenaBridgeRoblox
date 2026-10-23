@@ -103,7 +103,7 @@ export function createMcpRoutes(ctx) {
         return rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, logging: {} },
-          serverInfo: { name: 'arena-studio-connecter', version: '2.0.0' },
+          serverInfo: { name: 'arena-studio-connecter', version: '2.0.1' },
           instructions: 'Tools run inside the connected Roblox Studio session. Start the Arena Studio Connecter plugin in Studio first.',
         });
 
@@ -195,7 +195,7 @@ export function createMcpRoutes(ctx) {
         protocol: 'jsonrpc-2.0',
         protocolVersion: PROTOCOL_VERSION,
         transport: 'http',
-        serverInfo: { name: 'arena-studio-connecter', version: '2.0.0' },
+        serverInfo: { name: 'arena-studio-connecter', version: '2.0.1' },
         tools: tools.map((t) => ({ name: t.name, description: t.description })),
         usage: 'POST JSON-RPC 2.0 requests to this same URL with the bridge token in the Authorization header.',
       });

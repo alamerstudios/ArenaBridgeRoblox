@@ -106,7 +106,7 @@
 
         <div class="notice hidden" id="restart-notice">
           <svg viewBox="0 0 24 24"><path d="M12 8v4m0 4h.01"/><path d="M10.3 3.6 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/></svg>
-          <div><strong>Plugin wurde neu installiert</strong><span>Starte Roblox Studio einmal neu. Die lokale Plugin-Freigabe wird automatisch eingerichtet.</span></div>
+          <div><strong>Plugin wurde aktualisiert</strong><span>Starte Roblox Studio einmal komplett neu, damit die neue Plugin-Version geladen wird.</span></div>
           <button type="button" id="dismiss-notice" aria-label="Hinweis ausblenden">×</button>
         </div>
 
@@ -128,13 +128,13 @@
             <span class="radar-core"><img src="../assets/logo.svg" alt="" /></span>
           </div>
           <h2>Noch keine Place verbunden</h2>
-          <p>Das Plugin verbindet sich automatisch, sobald Roblox Studio mit einer Place geöffnet ist.</p>
+          <p id="empty-diagnosis">Das Plugin verbindet sich automatisch, sobald Roblox Studio mit einer Place geöffnet ist.</p>
           <div class="steps">
-            <div><span>1</span><p><strong>Roblox Studio neu starten</strong><small>Damit das automatisch installierte Plugin geladen wird.</small></p></div>
+            <div><span>1</span><p><strong>Roblox Studio neu starten</strong><small>Nach dem ersten EXE-Start Studio komplett schließen und neu öffnen, damit das Plugin geladen wird.</small></p></div>
             <i></i>
-            <div><span>2</span><p><strong>Place öffnen</strong><small>Keine URL und kein Security-Schalter erforderlich.</small></p></div>
+            <div><span>2</span><p><strong>Place öffnen</strong><small>Die Studio-Startseite zählt nicht. Meldet das Plugin „HTTP Requests sind aus“, einmalig Datei → Experience Settings → Security → <b>Allow HTTP Requests</b> einschalten.</small></p></div>
             <i></i>
-            <div><span>3</span><p><strong>Automatisch verbunden</strong><small>Die Place erscheint nach wenigen Sekunden hier.</small></p></div>
+            <div><span>3</span><p><strong>Automatisch verbunden</strong><small>Die Place erscheint nach wenigen Sekunden hier. Den Live-Status zeigt in Studio der Toolbar-Button „Arena Studio Connecter“.</small></p></div>
           </div>
         </section>
       </section>
@@ -190,6 +190,8 @@
             </div>
             <div class="card-title"><div><h2>Studio Plugin</h2><p>Automatisch verwaltet</p></div><span class="config-badge" id="plugin-badge">PRÜFE …</span></div>
             <div class="detail-row"><span>Status</span><strong id="plugin-detail-status">Wird installiert …</strong></div>
+            <div class="detail-row"><span>Plugin-Erkennung</span><strong id="discovery-detail-status">Startet …</strong></div>
+            <div class="detail-row"><span>Letzter Plugin-Kontakt</span><strong id="discovery-last-contact">Noch kein Kontakt aus Roblox Studio</strong></div>
             <div class="path-box" id="plugin-path">—</div>
             <div class="settings-actions">
               <button type="button" class="secondary-small" id="reinstall-plugin">Plugin neu installieren</button>

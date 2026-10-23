@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildAgentPrompt, buildGuideUrl } from '../src/core/agentPrompt.js';
+import { BridgeServer } from '../src/server.js';
+import { DEFAULTS } from '../src/core/config.js';
 import { PluginDiscoveryServer } from '../desktop/discoveryServer.js';
 import { buildPluginModel, installStudioPlugin } from '../desktop/pluginInstaller.js';
 import { SettingsStore } from '../desktop/settingsStore.js';
@@ -87,6 +89,116 @@ test('loopback discovery gives the plugin the current in-memory session', async 
     assert.equal(body.service, 'arena-studio-connecter');
   } finally {
     await discovery.stop();
+  }
+});
+
+test('Studio plugin never touches the protected HTTP setting and reconnects resiliently', () => {
+  // Regression test for "no Places load in the EXE": the per-Place HTTP
+  // setting has LocalUserSecurity, so a plugin may neither read nor write it.
+  // Version 2.0.0 gated every request behind exactly that access, which meant
+  // the plugin never contacted the app at all on a fresh Place.
+  const lua = fs.readFileSync(new URL('../roblox/ArenaStudioConnecter.server.lua', import.meta.url), 'utf8');
+  assert.equal(lua.includes('HttpEnabled'), false, 'plugin must not access the LocalUserSecurity HTTP setting');
+  assert.equal(lua.includes('ensureHttpEnabled'), false);
+  assert.ok(lua.includes('HttpService:RequestAsync'), 'plugin must request the local app directly');
+  assert.ok(lua.includes('pcall(runConnectedSession)'), 'a single failed cycle must not kill the connection loop');
+  assert.ok(lua.includes('ensureConnectionLoop'), 'the retry button must be able to restart the loop');
+
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(lua.includes(`local PLUGIN_VERSION = "${pkg.version}"`), 'plugin version must match the app version');
+});
+
+test('generated plugin model embeds the shipped Luau source byte for byte', () => {
+  const lua = fs.readFileSync(new URL('../roblox/ArenaStudioConnecter.server.lua', import.meta.url), 'utf8');
+  const model = buildPluginModel(lua);
+  const chunks = [...model.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)].map((match) => match[1]);
+  assert.equal(chunks.join(''), lua);
+});
+
+test('discovery reports plugin contact for the desktop diagnosis', async () => {
+  const session = {
+    id: 'session-diagnostics',
+    url: 'http://127.0.0.1:45679',
+    token: 'asc_EXAMPLE_DIAGNOSTICS_TOKEN_12345',
+    tokenIssuedAt: new Date('2026-01-01T00:00:00Z'),
+  };
+  const discovery = new PluginDiscoveryServer({ port: 0, getSession: () => session });
+  const info = await discovery.start();
+  try {
+    assert.equal(discovery.diagnostics().lastServedAt, null);
+    const response = await fetch(`${info.url}/v1/session`);
+    assert.equal(response.status, 200);
+    await response.json();
+    const diagnostics = discovery.diagnostics();
+    assert.equal(diagnostics.listening, true);
+    assert.equal(diagnostics.requests, 1);
+    assert.equal(diagnostics.sessionsServed, 1);
+    assert.equal(typeof diagnostics.lastServedAt, 'number');
+    assert.equal(diagnostics.lastOutcome, 'served');
+    assert.equal(JSON.stringify(diagnostics).includes(session.token), false, 'diagnostics must never contain the token');
+  } finally {
+    await discovery.stop();
+  }
+});
+
+test('full EXE chain: discovery session turns a Studio handshake into a listed Place', async () => {
+  // Mirrors the service wiring of the standalone/Electron hosts exactly, with
+  // a free discovery port instead of the fixed one.
+  const bridge = new BridgeServer({
+    ...DEFAULTS,
+    host: '127.0.0.1',
+    port: 0,
+    dashboard: false,
+    openBrowser: false,
+    logLevel: 'silent',
+    logFile: null,
+    sessionFile: null,
+  });
+  await bridge.start();
+  const discovery = new PluginDiscoveryServer({ getSession: () => bridge.session, port: 0 });
+  const discoveryInfo = await discovery.start();
+  try {
+    const discovered = await (await fetch(`${discoveryInfo.url}/v1/session`, {
+      headers: { Accept: 'application/json' },
+    })).json();
+    assert.equal(discovered.ok, true);
+    assert.equal(discovered.url, bridge.url);
+
+    const clientId = 'exe-chain-studio';
+    const handshake = await fetch(`${discovered.url}/studio/handshake`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${discovered.token}`,
+        'X-Client-Id': clientId,
+        'X-Client-Name': 'Roblox Studio',
+      },
+      body: JSON.stringify({
+        clientId,
+        name: 'Roblox Studio',
+        version: '2.0.1',
+        place: '4242',
+        placeId: 4242,
+        placeName: 'EXE Chain Place',
+        gameId: 777,
+        placeVersion: 3,
+        accountUserId: 42,
+        accountName: 'Tester',
+        isEdit: true,
+        isRunning: false,
+      }),
+    });
+    assert.equal(handshake.status, 200);
+    await handshake.json();
+
+    const places = bridge.session.activeClients(65_000);
+    assert.equal(places.length, 1);
+    assert.equal(places[0].id, clientId);
+    assert.equal(places[0].placeName, 'EXE Chain Place');
+    assert.equal(places[0].placeId, 4242);
+  } finally {
+    await discovery.stop();
+    await bridge.stop();
   }
 });
 

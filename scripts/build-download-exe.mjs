@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const name = 'Arena-Studio-Connecter-Portable-2.0.0-x64.exe';
+const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const name = `Arena-Studio-Connecter-Portable-${version}-x64.exe`;
 const input = path.join(root, 'release', name);
 const outputDir = path.join(root, 'downloads');
 const output = path.join(outputDir, name);

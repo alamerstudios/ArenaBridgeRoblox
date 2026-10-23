@@ -71,7 +71,7 @@ function snapshot() {
       ...pluginState,
       connected: places.length > 0,
       connectedPlaces: places.length,
-      discovery: discoveryState,
+      discovery: { ...discoveryState, ...(discovery?.diagnostics?.() ?? {}) },
     },
     places,
     settings: settings?.publicState() ?? {

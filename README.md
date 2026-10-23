@@ -10,7 +10,7 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 ## Download
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.0/downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe">
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.1/downloads/Arena-Studio-Connecter-Portable-2.0.1-x64.exe">
     <img src="docs/assets/download-windows.svg" width="372" alt="Arena Studio Connecter als portable Windows-x64-EXE herunterladen" />
   </a>
   <br />
@@ -18,9 +18,9 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.0/downloads/Arena-Studio-Connecter-Portable-2.0.0-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.0.1/downloads/Arena-Studio-Connecter-Portable-2.0.1-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
   ·
-  <a href="https://github.com/alamerstudios/ArenaBridgeRoblox/releases/tag/v2.0.0">Release-Details</a>
+  <a href="https://github.com/alamerstudios/ArenaBridgeRoblox/releases/tag/v2.0.1">Release-Details</a>
   ·
   <a href="#windows-exe-verwenden">Schnellstart</a>
 </p>
@@ -44,18 +44,26 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 
 ## Windows-EXE verwenden
 
-1. `Arena-Studio-Connecter-Portable-2.0.0-x64.exe` starten. Die portable App muss nicht installiert werden.
+1. `Arena-Studio-Connecter-Portable-2.0.1-x64.exe` starten. Die portable App muss nicht installiert werden.
    Bei einem nicht signierten Entwicklungsbuild kann Windows SmartScreen einmalig nachfragen.
 2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch. Beim ersten Start
    wird das SHA-256-verifizierte Cloudflared-Modul geladen; das kann je nach Verbindung kurz dauern.
-3. Roblox Studio nach der ersten Installation einmal neu starten.
-4. Eine Place öffnen. Sie erscheint nach wenigen Sekunden in der Desktop-App.
+3. Roblox Studio nach der ersten Installation (und nach jedem Plugin-Update) einmal komplett neu starten.
+4. Eine Place öffnen (nicht auf der Studio-Startseite bleiben). Sie erscheint nach wenigen
+   Sekunden in der Desktop-App. Zeigt das Studio-Plugin stattdessen einen Hinweis zu HTTP
+   Requests, folge der Anleitung im nächsten Absatz.
 5. Bei der gewünschten Place auf **Prompt kopieren** klicken.
 6. Unten links **Arena AI öffnen** wählen und den Prompt in einen neuen Agent-Chat einfügen.
 
-Das Studio-Plugin aktiviert die von Roblox benötigte lokale HTTP-Freigabe automatisch. Ein
-manuelles Umschalten unter Game Settings ist nicht erforderlich. Die Kommunikation bleibt auf
-`127.0.0.1`; URL, Token und API-Key müssen im Plugin nicht eingegeben werden.
+> **HTTP-Freigabe:** Roblox erlaubt Plugins aus Sicherheitsgründen **nicht**, die HTTP-Einstellung
+> einer Place selbst zu ändern (`HttpService.HttpEnabled` hat *LocalUserSecurity*). Das Plugin
+> fragt die lokale App deshalb direkt an. Antwortet Studio dabei mit „Http requests are not
+> enabled“, aktiviere einmalig **Datei → Experience Settings → Security → Allow HTTP Requests**.
+> Bei einer unveröffentlichten `.rbxl`-Datei geht es auch über die Command Bar
+> (`View` → `Command Bar`) mit `game:GetService("HttpService").HttpEnabled = true`. Fragt Studio
+> nach einer HTTP-Erlaubnis für das Plugin, erlaube `127.0.0.1`. Danach verbindet sich die Place
+> innerhalb weniger Sekunden von selbst - URL, Token und API-Key müssen im Plugin weiterhin
+> **nicht** eingegeben werden.
 
 ### Was im kopierten Prompt steht
 
@@ -97,6 +105,25 @@ Das Plugin fragt die aktuelle lokale Bridge-Session über
 
 Danach meldet das Plugin Place-ID, Universe-ID, Place-Name und den Studio-Account an und
 pollt gezielt nach Befehlen für diese Place.
+
+### Keine Place wird angezeigt?
+
+Die App zeigt auf der Startseite und unter **Einstellungen → Studio Plugin** („Letzter
+Plugin-Kontakt“), wie weit die Verbindung bereits gekommen ist. Prüfe in dieser Reihenfolge:
+
+1. Läuft die EXE nur **einmal**? Der feste Erkennungs-Port `32192` kann nur von einer Instanz
+   genutzt werden; eine zweite zeigt sonst „Plugin-Port ist bereits belegt“.
+2. Wurde Roblox Studio nach dem ersten EXE-Start bzw. nach einem Plugin-Update **komplett neu
+   gestartet**? Studio lädt lokale Plugins nur beim Start.
+3. Ist wirklich eine **Place geöffnet** (nicht die Studio-Startseite)?
+4. Was sagt das Studio-Plugin? In Studio auf den Toolbar-Button **Arena Studio Connecter**
+   klicken - dort steht der genaue Grund, z. B. dass **Allow HTTP Requests** noch aus ist
+   (siehe Hinweis oben). Auch die Studio-**Output**-Konsole zeigt die Meldung.
+5. Steht in der App weiterhin „Noch kein Kontakt aus Roblox Studio“, erreicht das Plugin die App
+   gar nicht: EXE neu starten, keine zweite Instanz laufen lassen und Studio danach neu öffnen.
+6. Hat das Plugin die Session geladen („Session geladen vor …“), meldet sich aber nicht an,
+   im Studio-Plugin auf **„Jetzt erneut verbinden“** klicken. Technische Details stehen in
+   `%LOCALAPPDATA%\Arena Studio Connecter\logs\bridge.log`.
 
 ---
 
@@ -215,7 +242,7 @@ npm-Pakete für Bun 1.4.3 und das native Windows-WebView2-Modul, verifiziert die
 per SHA-256 und cross-kompiliert anschließend eine direkt startbare EXE:
 
 ```text
-release/Arena-Studio-Connecter-Portable-2.0.0-x64.exe
+release/Arena-Studio-Connecter-Portable-2.0.1-x64.exe
 ```
 
 `npm run dist:download` übernimmt exakt diese Datei nach `downloads/` und erzeugt die
@@ -224,7 +251,7 @@ Cloudflared 2026.8.2 wird beim ersten App-Start aus der offiziellen Quelle oder 
 npm-Fallback geladen und vor der Ausführung gegen den fest hinterlegten SHA-256-Wert geprüft.
 
 Der alternative Electron-Build erzeugt zusätzlich
-`Arena-Studio-Connecter-Setup-2.0.0-x64.exe`. Die temporären Build-Ausgaben unter `release/`
+`Arena-Studio-Connecter-Setup-2.0.1-x64.exe`. Die temporären Build-Ausgaben unter `release/`
 sind gitignoriert; die direkt startbare EXE unter `downloads/` wird versioniert.
 
 ### Projektstruktur
