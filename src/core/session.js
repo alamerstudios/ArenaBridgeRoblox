@@ -22,6 +22,10 @@ const CLIENT_FIELDS = [
   'accountDisplayName',
   'isEdit',
   'isRunning',
+  'dataModelRole',
+  'editClientId',
+  'playtestActive',
+  'playtestMode',
 ];
 
 export class Session {
@@ -92,8 +96,22 @@ export class Session {
       .sort((a, b) => a.lastSeenMs - b.lastSeenMs);
   }
 
+  editableClients(windowMs = 60_000) {
+    return this.activeClients(windowMs).filter((client) => !client.dataModelRole || client.dataModelRole === 'edit');
+  }
+
   hasActiveClient(id, windowMs = 60_000) {
     return this.activeClients(windowMs).some((client) => client.id === id);
+  }
+
+  removeClient(id) {
+    this.clients.delete(id);
+  }
+
+  removePlaytestClients(editClientId) {
+    for (const [id, client] of this.clients) {
+      if (client.dataModelRole === 'play-server' && client.editClientId === editClientId) this.clients.delete(id);
+    }
   }
 
   uptimeSeconds() {
@@ -115,7 +133,7 @@ export class Session {
       token: includeToken ? this.token : undefined,
       tokenMasked: maskToken(this.token),
       stats: { ...this.stats },
-      clients: this.activeClients(),
+      clients: this.editableClients(),
     };
   }
 

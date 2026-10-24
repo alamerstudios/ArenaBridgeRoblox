@@ -10,7 +10,8 @@
  */
 
 import { sendJson, sendError, readJsonBody } from '../core/http.js';
-import { SUPPORTED_ACTIONS } from './api.js';
+import { SUPPORTED_ACTIONS, LOCAL_ACTION_NAMES, performLocalAction } from './api.js';
+import { resolveStudioTarget } from '../core/commandTarget.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 
@@ -25,6 +26,43 @@ const TOOL_SCHEMAS = {
     required: ['code'],
   },
   get_place_info: { type: 'object', properties: {}, additionalProperties: false },
+  play_game: {
+    type: 'object', properties: { mode: { type: 'string', enum: ['play', 'run'], default: 'play' } }, additionalProperties: false,
+  },
+  stop_game: { type: 'object', properties: {}, additionalProperties: false },
+  get_play_state: { type: 'object', properties: {}, additionalProperties: false },
+  get_blender_status: { type: 'object', properties: {}, additionalProperties: false },
+  create_blender_mesh: {
+    type: 'object',
+    description: 'Build with local Blender. Use vertices/faces for free meshes or primitives; no Python code is accepted.',
+    properties: {
+      name: { type: 'string' },
+      description: { type: 'string' },
+      format: { type: 'string', enum: ['fbx', 'glb'], default: 'fbx' },
+      upload: { type: 'boolean', default: true },
+      creatorId: { type: 'string', description: 'Optional numeric Roblox user/group ID; normally taken from settings or Studio' },
+      creatorType: { type: 'string', enum: ['user', 'group'] },
+      objects: {
+        type: 'array', minItems: 1, maxItems: 128,
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            primitive: { type: 'string', enum: ['cube', 'uv_sphere', 'ico_sphere', 'cylinder', 'cone', 'torus', 'plane'] },
+            vertices: { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 } },
+            faces: { type: 'array', items: { type: 'array', items: { type: 'integer' }, minItems: 3, maxItems: 64 } },
+            location: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+            rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Degrees around Blender X/Y/Z' },
+            scale: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+            size: { type: 'number' }, radius: { type: 'number' }, depth: { type: 'number' },
+            smooth: { type: 'boolean' },
+            material: { type: 'object', properties: { color: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 }, metallic: { type: 'number' }, roughness: { type: 'number' } } },
+          },
+        },
+      },
+    },
+    required: ['objects'],
+  },
   list_instances: {
     type: 'object',
     properties: {
@@ -46,6 +84,16 @@ const TOOL_SCHEMAS = {
       properties: { type: 'object' },
     },
     required: ['className', 'parent'],
+  },
+  insert_model: {
+    type: 'object',
+    properties: {
+      assetId: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+      parent: { type: 'string', default: 'game.Workspace' },
+      name: { type: 'string' },
+      position: { type: 'object', properties: { __type: { const: 'Vector3' }, x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
+    },
+    required: ['assetId'],
   },
   set_property: {
     type: 'object',
@@ -103,7 +151,7 @@ export function createMcpRoutes(ctx) {
         return rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, logging: {} },
-          serverInfo: { name: 'arena-studio-connecter', version: '2.0.1' },
+          serverInfo: { name: 'arena-studio-connecter', version: '2.1.0' },
           instructions: 'Tools run inside the connected Roblox Studio session. Start the Arena Studio Connecter plugin in Studio first.',
         });
 
@@ -123,26 +171,35 @@ export function createMcpRoutes(ctx) {
           return rpcError(id, -32602, `Unknown tool: ${name}`, { available: tools.map((t) => t.name) });
         }
 
-        const activeClients = session.activeClients();
+        const activeClients = session.editableClients();
         if (targetClientId && !activeClients.some((client) => client.id === targetClientId)) {
           return rpcError(id, -32004, `Studio client is offline: ${targetClientId}`);
         }
-        if (!targetClientId && activeClients.length > 1) {
-          return rpcError(id, -32602, 'Multiple Studio Places are open. Send X-Studio-Client-Id to select one.', {
-            clients: activeClients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
-          });
-        }
 
-        session.stats.commandsQueued += 1;
-        const { promise } = queue.enqueue({
-          action: name,
-          params: args,
-          source: 'mcp',
-          targetClientId,
-          timeoutMs: config.commandTimeoutMs,
-        });
-        const done = await promise;
-        if (done.ok) session.stats.commandsCompleted += 1; else session.stats.commandsFailed += 1;
+        let done;
+        if (LOCAL_ACTION_NAMES.has(name)) {
+          done = await performLocalAction(ctx, { action: name, params: args, targetClientId, source: 'mcp' });
+        } else {
+          const resolved = resolveStudioTarget(session, name, targetClientId);
+          if (resolved.error === 'PLAYTEST_REPORTER_OFFLINE') {
+            return rpcError(id, -32005, 'Der Playtest-Server ist noch nicht bereit. Warte kurz und versuche Stop erneut.');
+          }
+          if (!targetClientId && resolved.clients.length > 1) {
+            return rpcError(id, -32602, 'Multiple Studio Places are open. Send X-Studio-Client-Id to select one.', {
+              clients: resolved.clients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
+            });
+          }
+          session.stats.commandsQueued += 1;
+          const { promise } = queue.enqueue({
+            action: name,
+            params: args,
+            source: 'mcp',
+            targetClientId: resolved.targetClientId,
+            timeoutMs: config.commandTimeoutMs,
+          });
+          done = await promise;
+          if (done.ok) session.stats.commandsCompleted += 1; else session.stats.commandsFailed += 1;
+        }
 
         if (!done.ok) {
           return rpcResult(id, {
@@ -195,7 +252,7 @@ export function createMcpRoutes(ctx) {
         protocol: 'jsonrpc-2.0',
         protocolVersion: PROTOCOL_VERSION,
         transport: 'http',
-        serverInfo: { name: 'arena-studio-connecter', version: '2.0.1' },
+        serverInfo: { name: 'arena-studio-connecter', version: '2.1.0' },
         tools: tools.map((t) => ({ name: t.name, description: t.description })),
         usage: 'POST JSON-RPC 2.0 requests to this same URL with the bridge token in the Authorization header.',
       });

@@ -302,3 +302,96 @@ test('commands are routed only to the selected Studio Place', async () => {
     assert.equal(resultA.command, null, 'the other Studio client must not receive the targeted command');
   });
 });
+
+test('playtest stop is routed to the temporary server reporter and build commands stay in edit mode', async () => {
+  await withBridge(async (bridge, info) => {
+    for (const body of [
+      { clientId: 'edit-place', dataModelRole: 'edit', playtestActive: true, playtestServerClientId: 'play-server', placeId: 123 },
+      { clientId: 'play-server', dataModelRole: 'play-server', editClientId: 'edit-place', placeId: 123 },
+    ]) {
+      const response = await fetch(`${info.url}/studio/handshake`, {
+        method: 'POST', headers: auth(info.token), body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const status = await (await fetch(`${info.url}/status`, { headers: auth(info.token) })).json();
+    assert.deepEqual(status.clients.map((client) => client.id), ['edit-place'], 'reporter is not a second Place');
+
+    const rejected = await fetch(`${info.url}/command`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ action: 'create_instance', targetClientId: 'play-server', params: {} }),
+    });
+    assert.equal(rejected.status, 409);
+    assert.equal((await rejected.json()).error.code, 'STUDIO_CLIENT_OFFLINE');
+
+    const playPoll = fetch(`${info.url}/studio/poll`, {
+      headers: { ...auth(info.token), 'X-Client-Id': 'play-server' },
+    }).then((response) => response.json());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const stopResponse = fetch(`${info.url}/command`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ action: 'stop_game', targetClientId: 'edit-place' }),
+    });
+    const playCommand = await playPoll;
+    assert.equal(playCommand.command.action, 'stop_game');
+    await fetch(`${info.url}/studio/result`, {
+      method: 'POST', headers: { ...auth(info.token), 'X-Client-Id': 'play-server' },
+      body: JSON.stringify({ id: playCommand.command.id, ok: true, result: { stopped: true } }),
+    });
+    const stopped = await stopResponse;
+    assert.equal(stopped.status, 200);
+    assert.equal((await stopped.json()).command.assignedClientId, 'play-server');
+
+    bridge.session.removeClient('play-server');
+    await fetch(`${info.url}/studio/handshake`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ clientId: 'edit-place', dataModelRole: 'edit', playtestActive: false, placeId: 123 }),
+    });
+    const editPoll = fetch(`${info.url}/studio/poll`, {
+      headers: { ...auth(info.token), 'X-Client-Id': 'edit-place' },
+    }).then((response) => response.json());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const buildResponse = fetch(`${info.url}/command`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ action: 'get_place_info', targetClientId: 'edit-place' }),
+    });
+    const editCommand = await editPoll;
+    assert.equal(editCommand.command.action, 'get_place_info');
+    await fetch(`${info.url}/studio/result`, {
+      method: 'POST', headers: { ...auth(info.token), 'X-Client-Id': 'edit-place' },
+      body: JSON.stringify({ id: editCommand.command.id, ok: true, result: { name: 'Edit Place' } }),
+    });
+    assert.equal((await buildResponse).status, 200);
+  });
+});
+
+test('desktop local actions work over REST and MCP without a Studio queue or exposing secrets', async () => {
+  const localActions = {
+    get_blender_status: async () => ({ available: true, version: 'Blender Test', hasApiKey: true }),
+  };
+  await withBridge(async (_bridge, info) => {
+    const rest = await fetch(`${info.url}/command`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ action: 'get_blender_status', params: {} }),
+    });
+    assert.equal(rest.status, 200);
+    assert.equal((await rest.json()).command.result.available, true);
+
+    const tools = await fetch(`${info.url}/mcp`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    });
+    const toolBody = await tools.json();
+    assert.ok(toolBody.result.tools.some((tool) => tool.name === 'create_blender_mesh'));
+    assert.ok(toolBody.result.tools.some((tool) => tool.name === 'play_game'));
+
+    const mcp = await fetch(`${info.url}/mcp`, {
+      method: 'POST', headers: auth(info.token),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_blender_status', arguments: {} } }),
+    });
+    const mcpBody = await mcp.json();
+    assert.equal(mcpBody.result.isError, false);
+    assert.match(mcpBody.result.content[0].text, /Blender Test/);
+  }, { localActions });
+});

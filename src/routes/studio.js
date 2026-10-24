@@ -33,6 +33,9 @@ export function createStudioRoutes(ctx) {
 
       const data = body.data ?? {};
       const id = data.clientId || req.headers['x-client-id'] || `studio-${Math.random().toString(36).slice(2, 8)}`;
+      if ((!data.dataModelRole || data.dataModelRole === 'edit') && data.playtestActive === false) {
+        session.removePlaytestClients(String(id));
+      }
       session.touchClient(String(id), {
         name: data.name ?? 'Roblox Studio',
         version: data.version ?? 'unknown',
@@ -47,6 +50,10 @@ export function createStudioRoutes(ctx) {
         accountDisplayName: data.accountDisplayName,
         isEdit: data.isEdit,
         isRunning: data.isRunning,
+        dataModelRole: data.dataModelRole ?? 'edit',
+        editClientId: data.editClientId,
+        playtestActive: data.playtestActive,
+        playtestMode: data.playtestMode,
       });
       logger.info('Roblox Studio connected', {
         clientId: String(id),
@@ -115,6 +122,9 @@ export function createStudioRoutes(ctx) {
         durationMs: completed.durationMs,
         ...(completed.ok ? {} : { error: completed.error }),
       });
+      if (completed.ok && completed.action === 'stop_game' && session.clients.get(clientId)?.dataModelRole === 'play-server') {
+        session.removeClient(clientId);
+      }
       sendJson(res, 200, { ok: true, acknowledged: completed.id });
     },
 

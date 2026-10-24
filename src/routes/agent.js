@@ -21,7 +21,7 @@ export function createAgentRoutes({ session }) {
   return {
     guide(req, res, url) {
       const requestedClientId = url.searchParams.get('clientId') ?? '';
-      const clients = session.activeClients();
+      const clients = session.editableClients();
       const client = clients.find((candidate) => candidate.id === requestedClientId) ?? null;
       const origin = requestOrigin(req);
 
@@ -94,9 +94,28 @@ export function createAgentRoutes({ session }) {
         `  --data '${JSON.stringify({ action: 'get_place_info', params: {}, targetClientId: client?.id ?? 'CLIENT_ID_FROM_STATUS' })}'`,
         '```',
         '',
-        '## Available Studio actions',
+        '## Available Studio and desktop actions',
         '',
         actions,
+        '',
+        '## Playtest control',
+        '',
+        '- `play_game` with `{ "mode": "play" }` starts a real Play Solo test; `run` starts a server simulation.',
+        '- Wait until `get_play_state` reports the running session. Stop with `stop_game` using the same editor `targetClientId`; the bridge forwards it safely to the temporary playtest server.',
+        '- Build only in edit mode. Changes made by the running game are discarded when the playtest stops.',
+        '',
+        '## Blender meshes and Open Cloud',
+        '',
+        '- First call `get_blender_status`. Blender must be installed locally. For uploads, the desktop settings need an Open-Cloud key with **Assets Read + Write** and a Creator ID (or a connected Studio account).',
+        '- Call `create_blender_mesh` with structured `objects`. Use primitives (`cube`, `uv_sphere`, `ico_sphere`, `cylinder`, `cone`, `torus`, `plane`) or raw `vertices` (Blender XYZ triples) plus zero-based `faces`. Optional `location`, `rotation` in degrees, `scale`, `smooth` and `material` are supported.',
+        '- Do not send Python, shell commands, API keys or secrets. The desktop executes only the fixed Blender exporter; the saved Open-Cloud key never enters the prompt, tunnel or Studio.',
+        '- FBX is the default and Open Cloud uploads it as a Model. After the returned Asset ID is available, call `insert_model` with that `assetId` and the same Studio target. Moderation can require a short retry.',
+        '',
+        'Example mesh object:',
+        '',
+        '```json',
+        JSON.stringify({ action: 'create_blender_mesh', params: { name: 'Arena Crystal', upload: true, objects: [{ name: 'Crystal', primitive: 'ico_sphere', radius: 1.5, scale: [0.7, 0.7, 1.8], smooth: true, material: { color: [0.25, 0.55, 1, 1], metallic: 0.15, roughness: 0.25 } }] }, targetClientId: client?.id ?? 'CLIENT_ID_FROM_STATUS' }, null, 2),
+        '```',
         '',
         `A structured action catalogue is available at authenticated \`GET ${origin}/actions\`.`,
         'The MCP-compatible endpoint is `POST /mcp`; select a Place with the `X-Studio-Client-Id` header.',

@@ -31,7 +31,7 @@ Legacy-Dashboard erhalten. Die Prüfung erfolgt konstant-zeitlich (SHA-256 + `ti
 | 400 | `INVALID_BODY`, `MISSING_ACTION`, `UNKNOWN_ACTION`, `INVALID_PARAMS`, `INVALID_TARGET`, `TARGET_REQUIRED` | Ungültige Eingabe/Zielauswahl |
 | 404 | `NOT_FOUND`, `COMMAND_NOT_FOUND` | Route bzw. Befehl unbekannt |
 | 409 | `STUDIO_CLIENT_OFFLINE`, `WRONG_STUDIO_CLIENT` | Ziel-Place getrennt oder falscher Plugin-Client |
-| 502 | — | Studio hat einen Fehler zurückgemeldet |
+| 502 | — | Studio oder eine lokale Desktop-Aktion hat einen Fehler zurückgemeldet |
 | 504 | — | Studio hat nicht rechtzeitig geantwortet |
 
 Fehlerformat:
@@ -152,7 +152,7 @@ Roblox Studio kann keine eingehenden Verbindungen annehmen, daher **pollt** das 
 
 | Endpoint | Zweck |
 |----------|-------|
-| `POST /studio/handshake` | Plugin meldet Client-, Place-, Studio- und Account-Metadaten an |
+| `POST /studio/handshake` | Plugin meldet Client-, Place-, Studio-, Account- und Playtest-Metadaten (`dataModelRole`, `editClientId`) an |
 | `GET /studio/poll` | Long-Poll; liefert den nächsten Befehl oder nach ~25 s `{ command: null, idle: true }` |
 | `POST /studio/result` | Plugin liefert `{ id, ok, result, error }` zurück |
 | `POST /studio/log` | Plugin leitet Studio-Output in das Bridge-Log weiter |
@@ -173,7 +173,11 @@ Client <--Ergebnis-- Bridge <--POST /studio/result---+
 |--------|-----------|----------|
 | `ping` | — | `pong`, Plugin-Version, `placeId` |
 | `run_luau` | `code`, `timeoutMs?` | `returned`, `output[]`, `durationMs` |
-| `get_place_info` | — | `placeId`, `gameId`, `name`, `placeVersion`, … |
+| `get_place_info` | — | `placeId`, `gameId`, tatsächlicher `name`, `placeVersion`, … |
+| `play_game` | `mode?`: `play` (Standard) oder `run` | Start angenommen, Modus und aktueller Playtest-Status |
+| `get_play_state` | — | `playtestActive`, `starting`, `isRunning`, `editModeActive`, Fehlerstatus |
+| `stop_game` | — | Stop des aktiven Playtests über den Server-Reporter |
+| `insert_model` | `assetId`, `parent?`, `name?`, `position?` | Eingefügte Asset-/Instanzpfade |
 | `list_instances` | `path`, `depth?` (0–5) | Baum aus `name`/`className`/`path`/`children` |
 | `get_instance` | `path` | `className`, `properties`, `childCount` |
 | `create_instance` | `className`, `parent`, `properties?` | `created`, `path` |
@@ -184,6 +188,59 @@ Client <--Ergebnis-- Bridge <--POST /studio/result---+
 | `get_selection` | — | `count`, `selection[]` |
 | `set_selection` | `paths[]` | `selected`, `missing[]` |
 | `get_output` | `limit?` | Zuletzt von Studio geloggte Meldungen |
+
+`play_game` meldet den angenommenen Start sofort zurück. Der eigentliche Studio-Aufruf wartet im
+Plugin bis zum Testende. Während eines echten Playtests leitet die Bridge `stop_game` von der
+Editor-Client-ID an den temporären `play-server` weiter. Dieser ist in `/status` nicht als zweite
+Place sichtbar und akzeptiert nur `ping`, `get_play_state` und `stop_game`.
+
+Beispiel für den Upload-Ablauf nach `create_blender_mesh`:
+
+```json
+{
+  "action": "insert_model",
+  "targetClientId": "CLIENT_ID_DER_PLACE",
+  "params": { "assetId": "987654321", "parent": "game.Workspace" }
+}
+```
+
+### Lokale Desktop-Aktionen
+
+Diese Aktionen laufen in der Windows-Desktop-App und nicht im Studio-Plugin. Sie sind ebenfalls
+als MCP-Tools verfügbar, synchron und benötigen keine Studio-Warteschlange:
+
+| Aktion | Parameter | Rückgabe |
+|--------|-----------|----------|
+| `get_blender_status` | — | Blender-Pfad/-Version, Open-Cloud-/Creator-Konfiguration ohne Secret |
+| `create_blender_mesh` | `name?`, `description?`, `format?` (`fbx`/`glb`), `upload?`, `objects[]`, optional `creatorType`/`creatorId` | Lokaler Export, bei Upload `assetId`, `assetUrl`, Moderationsstatus |
+
+Ein Primitive-Beispiel:
+
+```json
+{
+  "action": "create_blender_mesh",
+  "targetClientId": "CLIENT_ID_DER_PLACE",
+  "params": {
+    "name": "Arena Sockel",
+    "format": "fbx",
+    "upload": true,
+    "objects": [{
+      "name": "Sockel",
+      "primitive": "cylinder",
+      "radius": 3,
+      "depth": 0.5,
+      "segments": 48,
+      "material": { "color": [0.2, 0.35, 1, 1], "roughness": 0.35 }
+    }]
+  }
+}
+```
+
+Statt `primitive` kann ein Objekt `vertices` (`[[x,y,z], …]`) und `faces`
+(`[[indexA,indexB,indexC], …]`) enthalten. Indizes sind nullbasiert. Pro Auftrag gelten enge
+Limits für Objekte, Vertices, Faces und Zahlenwerte. `upload: false` erzeugt nur die lokale Datei.
+Der Open-Cloud-Key wird ausschließlich von der Desktop-App aus dem DPAPI-Speicher gelesen und ist
+weder ein Aktionsparameter noch Teil einer Antwort.
 
 ### Werte-Serialisierung
 

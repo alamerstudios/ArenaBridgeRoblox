@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { normalizeBlenderConfig, DEFAULT_BLENDER_CONFIG } from '../src/core/blenderConfig.js';
 
 function powershell(script, env = {}) {
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
@@ -48,7 +49,9 @@ export class WindowsSettingsStore {
 
   #write() {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+    const temp = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+    fs.renameSync(temp, this.filePath);
   }
 
   #decryptStoredKey() {
@@ -92,6 +95,24 @@ export class WindowsSettingsStore {
 
   getLaunchAtLogin() { return this.data.launchAtLogin === true; }
 
+  getAutoUpdate() { return this.data.autoUpdate !== false; }
+
+  setAutoUpdate(enabled) {
+    this.data.autoUpdate = enabled === true;
+    this.#write();
+    return this.publicState();
+  }
+
+  getBlenderConfig() {
+    return normalizeBlenderConfig(this.data.blender ?? {}, DEFAULT_BLENDER_CONFIG);
+  }
+
+  saveBlenderConfig(value) {
+    this.data.blender = normalizeBlenderConfig(value, this.getBlenderConfig());
+    this.#write();
+    return this.publicState();
+  }
+
   publicState() {
     const key = this.getApiKey();
     return {
@@ -99,6 +120,8 @@ export class WindowsSettingsStore {
       apiKeyMasked: maskSecret(key),
       encryptionAvailable: this.encryptionAvailable,
       launchAtLogin: this.getLaunchAtLogin(),
+      autoUpdate: this.getAutoUpdate(),
+      blender: this.getBlenderConfig(),
     };
   }
 }

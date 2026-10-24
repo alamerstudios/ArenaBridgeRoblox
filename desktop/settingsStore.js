@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeBlenderConfig, DEFAULT_BLENDER_CONFIG } from '../src/core/blenderConfig.js';
 
 function maskSecret(value) {
   if (!value) return null;
@@ -67,6 +68,26 @@ export class SettingsStore {
     return this.publicState();
   }
 
+  getAutoUpdate() {
+    return this.data.autoUpdate !== false;
+  }
+
+  setAutoUpdate(enabled) {
+    this.data.autoUpdate = enabled === true;
+    this.#write();
+    return this.publicState();
+  }
+
+  getBlenderConfig() {
+    return normalizeBlenderConfig(this.data.blender ?? {}, DEFAULT_BLENDER_CONFIG);
+  }
+
+  saveBlenderConfig(value) {
+    this.data.blender = normalizeBlenderConfig(value, this.getBlenderConfig());
+    this.#write();
+    return this.publicState();
+  }
+
   publicState() {
     const apiKey = this.getApiKey();
     return {
@@ -74,6 +95,8 @@ export class SettingsStore {
       apiKeyMasked: maskSecret(apiKey),
       encryptionAvailable: Boolean(this.safeStorage?.isEncryptionAvailable?.()),
       launchAtLogin: this.getLaunchAtLogin(),
+      autoUpdate: this.getAutoUpdate(),
+      blender: this.getBlenderConfig(),
     };
   }
 }

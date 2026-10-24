@@ -52,6 +52,8 @@ export function buildAgentPrompt({ tunnelUrl, token, client }) {
     `- Setze bei jedem POST /command exakt "targetClientId": "${client.id}", damit nur diese Place verändert wird.`,
     '- Untersuche zuerst die vorhandene Place-Struktur, bevor du etwas änderst.',
     '- Prüfe jede ausgeführte Änderung anschließend über die Read-/Get-Aktionen der Bridge.',
+    '- Nutze play_game, get_play_state und stop_game für Playtests. Nach stop_game keine weiteren Build-Befehle senden, bis Studio wieder im Edit-Modus ist.',
+    '- Für lokale Blender-Meshes stehen get_blender_status und create_blender_mesh zur Verfügung; anschließend insert_model mit der zurückgegebenen Asset-ID. Der Open-Cloud-Key bleibt ausschließlich auf meinem PC und wird niemals angefordert.',
     '',
     'Wenn ich in dieser Nachricht noch keine konkrete Aufgabe für die Place genannt habe, bestätige kurz die Verbindung und frage mich, was du bauen oder ändern sollst. Führe danach die Aufgabe selbstständig über die Bridge aus und fasse das Ergebnis zusammen.',
   ].join('\n');

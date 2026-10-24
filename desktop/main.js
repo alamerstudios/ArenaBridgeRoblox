@@ -10,16 +10,31 @@ import { PluginDiscoveryServer } from './discoveryServer.js';
 import { CloudflareTunnel } from './cloudflareTunnel.js';
 import { installStudioPlugin } from './pluginInstaller.js';
 import { SettingsStore } from './settingsStore.js';
+import { RobloxMetadataService } from './robloxMetadata.js';
+import { BlenderService } from '../src/services/blenderService.js';
+import { UpdateManager } from './updateManager.js';
+import { ElectronUpdateManager } from './electronUpdateManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, '..');
 const ARENA_AGENT_URL = 'https://arena.ai/agent';
+const ALLOWED_EXTERNAL_URLS = new Set([
+  ARENA_AGENT_URL,
+  'https://create.roblox.com/dashboard/credentials',
+  'https://create.roblox.com/docs/cloud/guides/usage-assets',
+  'https://www.blender.org/download/',
+  'https://github.com/alamerstudios/ArenaBridgeRoblox/releases',
+]);
 
 let mainWindow = null;
 let bridge = null;
 let discovery = null;
 let tunnel = null;
 let settings = null;
+let metadata = null;
+let blender = null;
+let updates = null;
+let portableUpdates = false;
 let pluginState = { status: 'starting', installed: false, message: 'Plugin wird installiert …' };
 let bridgeState = { status: 'starting', message: 'Lokale Bridge wird gestartet …' };
 let discoveryState = { status: 'starting', message: 'Studio-Erkennung wird gestartet …' };
@@ -51,7 +66,8 @@ function installPlugin() {
 }
 
 function snapshot() {
-  const places = bridge?.session.activeClients(65_000) ?? [];
+  const places = bridge?.session.editableClients(65_000) ?? [];
+  const enrichedPlaces = metadata?.decorate(places) ?? places;
   const tunnelState = tunnel?.snapshot() ?? { status: 'idle', url: null, message: 'Tunnel nicht gestartet.' };
   return {
     app: {
@@ -73,13 +89,17 @@ function snapshot() {
       connectedPlaces: places.length,
       discovery: { ...discoveryState, ...(discovery?.diagnostics?.() ?? {}) },
     },
-    places,
+    places: enrichedPlaces,
     settings: settings?.publicState() ?? {
       hasApiKey: false,
       apiKeyMasked: null,
       encryptionAvailable: false,
       launchAtLogin: false,
+      autoUpdate: true,
+      blender: { blenderPath: '', creatorType: 'user', creatorId: '' },
     },
+    blender: blender?.snapshot() ?? { status: 'starting', available: false, message: 'Blender wird gesucht …' },
+    updates: updates?.snapshot() ?? { status: 'starting', message: 'Update-Dienst wird gestartet …' },
     now: Date.now(),
   };
 }
@@ -100,11 +120,13 @@ async function startServices() {
     openBrowser: false,
     logFile: path.join(app.getPath('logs'), 'bridge.log'),
     sessionFile: path.join(userData, 'runtime', 'session.json'),
+    localActions: blender?.localActions() ?? {},
   };
 
   try {
     bridge = new BridgeServer(config);
     const info = await bridge.start();
+    bridge.logger.addSecret(settings?.getApiKey());
     bridgeState = { status: 'online', message: 'Lokale Bridge läuft.', localUrl: info.url };
   } catch (error) {
     bridgeState = { status: 'error', message: `Bridge-Start fehlgeschlagen: ${error.message}` };
@@ -162,11 +184,12 @@ function registerIpc() {
   ipcMain.handle('app:get-state', () => snapshot());
 
   ipcMain.handle('place:copy-prompt', (_event, clientId) => {
-    const client = bridge?.session.activeClients(65_000).find((entry) => entry.id === clientId);
+    const client = bridge?.session.editableClients(65_000).find((entry) => entry.id === clientId);
     const tunnelUrl = tunnel?.snapshot().url;
     if (!client) throw new Error('Diese Place ist nicht mehr mit Roblox Studio verbunden.');
     if (!tunnelUrl) throw new Error('Der Cloudflare-Tunnel ist noch nicht online.');
-    const prompt = buildAgentPrompt({ tunnelUrl, token: bridge.session.token, client });
+    const [enrichedClient] = metadata.decorate([client]);
+    const prompt = buildAgentPrompt({ tunnelUrl, token: bridge.session.token, client: enrichedClient });
     clipboard.writeText(prompt);
     return { ok: true, guideUrl: buildGuideUrl(tunnelUrl, client.id), message: 'Arena-Prompt wurde kopiert.' };
   });
@@ -174,6 +197,26 @@ function registerIpc() {
   ipcMain.handle('app:open-arena', async () => {
     await shell.openExternal(ARENA_AGENT_URL);
     return { ok: true };
+  });
+  ipcMain.handle('app:open-external', async (_event, url) => {
+    if (!ALLOWED_EXTERNAL_URLS.has(String(url))) throw new Error('Dieser externe Link ist nicht freigegeben.');
+    await shell.openExternal(String(url));
+    return { ok: true };
+  });
+  ipcMain.handle('updates:check', async () => {
+    const result = await updates.checkForUpdates();
+    broadcastState();
+    return result;
+  });
+  ipcMain.handle('updates:install', async () => {
+    if (portableUpdates) {
+      const result = await updates.installUpdate();
+      setTimeout(() => mainWindow?.close(), 150);
+      return result;
+    }
+    await cleanup();
+    allowQuit = true;
+    return updates.installUpdate();
   });
 
   ipcMain.handle('tunnel:retry', async () => {
@@ -191,6 +234,7 @@ function registerIpc() {
 
   ipcMain.handle('settings:save-api-key', (_event, key) => {
     const result = settings.saveApiKey(key);
+    bridge?.logger.addSecret(settings.getApiKey());
     broadcastState();
     return result;
   });
@@ -209,6 +253,19 @@ function registerIpc() {
     return settings.publicState();
   });
 
+  ipcMain.handle('settings:set-auto-update', (_event, enabled) => {
+    const result = settings.setAutoUpdate(enabled === true);
+    updates.startAutomatic(() => settings.getAutoUpdate());
+    broadcastState();
+    return result;
+  });
+  ipcMain.handle('settings:save-blender', async (_event, value) => {
+    const result = settings.saveBlenderConfig(value ?? {});
+    await blender.refreshStatus();
+    broadcastState();
+    return { settings: result, blender: blender.snapshot() };
+  });
+
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:toggle-maximize', () => {
     if (!mainWindow) return;
@@ -221,6 +278,7 @@ async function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(stateTimer);
+  updates?.stopAutomatic();
   await tunnel?.stop().catch(() => {});
   await discovery?.stop().catch(() => {});
   await bridge?.stop().catch(() => {});
@@ -237,9 +295,28 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    settings = new SettingsStore({ filePath: path.join(app.getPath('userData'), 'settings.json'), safeStorage });
+    const userData = app.getPath('userData');
+    settings = new SettingsStore({ filePath: path.join(userData, 'settings.json'), safeStorage });
+    metadata = new RobloxMetadataService();
+    blender = new BlenderService({ settings, workDirectory: path.join(userData, 'meshes') });
+    portableUpdates = app.isPackaged && process.platform === 'win32' && Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
+    updates = portableUpdates
+      ? new UpdateManager({
+          currentVersion: app.getVersion(),
+          executablePath: process.execPath,
+          dataDirectory: path.join(userData, 'updates'),
+          artifactPrefix: 'Arena-Studio-Connecter-Electron-Portable',
+          onState: broadcastState,
+        })
+      : new ElectronUpdateManager({
+          currentVersion: app.getVersion(),
+          supported: app.isPackaged && process.platform === 'win32',
+          onState: broadcastState,
+        });
     registerIpc();
     createWindow();
+    updates.startAutomatic(() => settings.getAutoUpdate());
+    void blender.refreshStatus().then(broadcastState);
     stateTimer = setInterval(broadcastState, 1_000);
     stateTimer.unref?.();
     await startServices();

@@ -26,12 +26,17 @@ function createStandaloneApi() {
     },
     copyPrompt: (clientId) => request('/api/copy-prompt', { clientId }),
     openArena: () => request('/api/open-arena', {}),
+    openExternal: (url) => request('/api/open-external', { url }),
+    checkForUpdates: () => request('/api/check-update', {}),
+    installUpdate: () => request('/api/install-update', {}),
     retryTunnel: () => request('/api/retry-tunnel', {}),
     reinstallPlugin: () => request('/api/reinstall-plugin', {}),
     showPluginFile: () => request('/api/show-plugin', {}),
     saveApiKey: (value) => request('/api/save-api-key', { value }),
     clearApiKey: () => request('/api/clear-api-key', {}),
     setLaunchAtLogin: (enabled) => request('/api/launch-at-login', { enabled }),
+    setAutoUpdate: (enabled) => request('/api/auto-update', { enabled }),
+    saveBlenderSettings: (value) => request('/api/save-blender', { value }),
     minimize: () => nativeMessage('window:minimize') || request('/api/window/minimize', {}),
     toggleMaximize: () => nativeMessage('window:toggle-maximize') || request('/api/window/maximize', {}),
     close: () => nativeMessage('window:close') || request('/api/window/close', {}),
@@ -242,7 +247,12 @@ function renderAccount(places) {
   const name = client?.accountDisplayName || client?.accountName;
   byId('account-name').textContent = text(name, client ? 'Studio Account' : 'Nicht verbunden');
   byId('account-id').textContent = client?.accountUserId ? `@${text(client.accountName, 'Roblox')} · ID ${client.accountUserId}` : (client ? text(client.placeName, 'Place verbunden') : 'Öffne eine Place');
-  byId('account-avatar').textContent = name ? name.trim().charAt(0).toUpperCase() : '?';
+  byId('account-avatar-initial').textContent = name ? name.trim().charAt(0).toUpperCase() : '?';
+  const avatar = byId('account-avatar-image');
+  const avatarSource = typeof client?.accountAvatar === 'string' && client.accountAvatar.startsWith('data:image/') ? client.accountAvatar : '';
+  if (avatarSource && avatar.getAttribute('src') !== avatarSource) avatar.src = avatarSource;
+  avatar.classList.toggle('hidden', !avatarSource);
+  if (!avatarSource) avatar.removeAttribute('src');
   byId('account-online').classList.toggle('online', Boolean(client));
 }
 
@@ -324,12 +334,55 @@ function renderSettings(state) {
   byId('tunnel-url').textContent = text(tunnel.url, 'Noch nicht verfügbar');
 }
 
+function setFieldWhenIdle(id, value) {
+  const field = byId(id);
+  if (document.activeElement !== field) field.value = value ?? '';
+}
+
+function renderBlender(state) {
+  const blender = state.blender ?? {};
+  const config = state.settings?.blender ?? {};
+  const available = blender.available === true;
+  setBadge(byId('blender-badge'), available ? 'BEREIT' : (blender.status === 'starting' ? 'SUCHE …' : 'AKTION NÖTIG'), available ? 'online' : (blender.status === 'starting' ? 'starting' : 'error'));
+  byId('blender-status').textContent = text(blender.version || blender.message, available ? 'Blender gefunden' : 'Nicht gefunden');
+  byId('blender-status').title = text(blender.message, '');
+  setFieldWhenIdle('blender-path', config.blenderPath);
+  setFieldWhenIdle('creator-id', config.creatorId);
+  if (document.activeElement !== byId('creator-type')) byId('creator-type').value = config.creatorType === 'group' ? 'group' : 'user';
+  byId('blender-path-status').textContent = text(blender.path || config.blenderPath, available ? blender.message : 'Blender nicht gefunden – installieren oder Pfad eintragen');
+  byId('blender-path-status').title = text(blender.message, '');
+}
+
+function renderUpdates(state) {
+  const update = state.updates ?? {};
+  const status = update.status ?? 'idle';
+  const busy = ['checking', 'downloading', 'installing'].includes(status);
+  const badgeStatus = status === 'ready' || status === 'up-to-date' ? 'online' : (status === 'error' || status === 'unavailable' ? 'error' : (busy ? 'starting' : ''));
+  const badgeLabels = {
+    ready: 'UPDATE BEREIT', 'up-to-date': 'AKTUELL', checking: 'PRÜFE …', downloading: 'LÄDT …',
+    installing: 'INSTALLIERT …', error: 'FEHLER', unavailable: 'NICHT VERFÜGBAR', available: 'GEFUNDEN', idle: 'BEREIT',
+  };
+  setBadge(byId('update-badge'), badgeLabels[status] ?? 'BEREIT', badgeStatus);
+  byId('update-current').textContent = `v${text(state.app?.version, '—')}`;
+  byId('update-latest').textContent = update.latestVersion ? `v${update.latestVersion}` : 'Noch nicht geprüft';
+  byId('update-message').textContent = text(update.message, 'Noch nicht nach Updates gesucht.');
+  byId('check-update').disabled = busy || status === 'ready' || status === 'unavailable';
+  byId('install-update').classList.toggle('hidden', status !== 'ready');
+  byId('install-update').disabled = status !== 'ready';
+  byId('auto-update').checked = state.settings?.autoUpdate !== false;
+  const progress = byId('update-progress');
+  progress.classList.toggle('hidden', status !== 'downloading');
+  progress.querySelector('i').style.width = `${Math.max(0, Math.min(100, Number(update.progress) || 0))}%`;
+}
+
 function render(state) {
   currentState = state;
   byId('title-version').textContent = `v${text(state.app?.version, '—')}`;
   renderServices(state);
   renderPlaces(state);
   renderSettings(state);
+  renderBlender(state);
+  renderUpdates(state);
 }
 
 function switchView(name) {
@@ -385,6 +438,52 @@ function wireEvents() {
   byId('open-arena').addEventListener('click', async () => {
     try { await api.openArena(); } catch (error) { showToast('Browser konnte nicht geöffnet werden', error.message, 'error'); }
   });
+  document.querySelectorAll('[data-external]').forEach((button) => button.addEventListener('click', async () => {
+    try { await api.openExternal(button.dataset.external); } catch (error) { showToast('Link konnte nicht geöffnet werden', error.message, 'error'); }
+  }));
+  byId('check-update').addEventListener('click', async () => {
+    const button = byId('check-update');
+    button.disabled = true;
+    try {
+      const result = await api.checkForUpdates();
+      showToast(result.status === 'ready' ? 'Update bereit' : 'Update-Status', result.message || 'Die Prüfung ist abgeschlossen.');
+    } catch (error) { showToast('Update-Suche fehlgeschlagen', error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
+  byId('install-update').addEventListener('click', async () => {
+    const button = byId('install-update');
+    button.disabled = true;
+    try {
+      await api.installUpdate();
+      showToast('Update wird installiert', 'Die App schließt jetzt und startet mit der neuen Version.');
+    } catch (error) {
+      button.disabled = false;
+      showToast('Installation fehlgeschlagen', error.message, 'error');
+    }
+  });
+  byId('auto-update').addEventListener('change', async (event) => {
+    try {
+      await api.setAutoUpdate(event.currentTarget.checked);
+      showToast('Update-Einstellung gespeichert', event.currentTarget.checked ? 'Updates werden automatisch gesucht und geladen.' : 'Automatische Updates sind deaktiviert.');
+    } catch (error) { showToast('Einstellung fehlgeschlagen', error.message, 'error'); }
+  });
+  byId('save-blender').addEventListener('click', async () => {
+    const button = byId('save-blender');
+    button.disabled = true;
+    try {
+      const result = await api.saveBlenderSettings({
+        blenderPath: byId('blender-path').value,
+        creatorType: byId('creator-type').value,
+        creatorId: byId('creator-id').value,
+      });
+      showToast('Mesh-Einstellungen gespeichert', result.blender?.available ? 'Blender und Creator-Konfiguration sind bereit.' : result.blender?.message || 'Die Konfiguration wurde gespeichert.', result.blender?.available ? 'success' : 'error');
+    } catch (error) { showToast('Mesh-Einstellungen fehlgeschlagen', error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
+  byId('detect-blender').addEventListener('click', async () => {
+    byId('blender-path').value = '';
+    byId('save-blender').click();
+  });
   byId('dismiss-notice').addEventListener('click', () => {
     noticeDismissed = true;
     byId('restart-notice').classList.add('hidden');
@@ -434,11 +533,13 @@ function wireEvents() {
 }
 
 const demoState = {
-  app: { version: '2.0.1' },
+  app: { version: '2.1.0' },
   bridge: { status: 'online', message: 'Lokale Bridge läuft.' },
   tunnel: { status: 'online', url: 'https://studio-arena-demo.trycloudflare.com', message: 'Cloudflare-Tunnel ist online.' },
   plugin: { status: 'installed', installed: true, connected: true, connectedPlaces: 2, message: 'Plugin ist installiert und aktuell.', path: 'C:\\Users\\Arena\\AppData\\Local\\Roblox\\Plugins\\ArenaStudioConnecter.rbxmx' },
-  settings: { hasApiKey: true, apiKeyMasked: 'rblx-••••••••7K2A', encryptionAvailable: true, launchAtLogin: true },
+  settings: { hasApiKey: true, apiKeyMasked: 'rblx-••••••••7K2A', encryptionAvailable: true, launchAtLogin: true, autoUpdate: true, blender: { blenderPath: '', creatorType: 'user', creatorId: '48192017' } },
+  blender: { status: 'online', available: true, version: 'Blender 5.0', path: 'C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe', message: 'Blender ist bereit.' },
+  updates: { status: 'up-to-date', currentVersion: '2.1.0', latestVersion: '2.1.0', message: 'Version 2.1.0 ist aktuell.', progress: 0 },
   places: [
     { id: 'studio-a91e4c', placeName: 'Neon District', placeId: 18402938401, gameId: 6129473051, placeVersion: 87, version: '2.0.0', accountName: 'ArenaBuilder', accountDisplayName: 'Arena Builder', accountUserId: 48192017 },
     { id: 'studio-c44f2a', placeName: 'Obby Prototype', placeId: 9981726304, gameId: 4430291882, placeVersion: 12, version: '2.0.0', accountName: 'ArenaBuilder', accountDisplayName: 'Arena Builder', accountUserId: 48192017 },

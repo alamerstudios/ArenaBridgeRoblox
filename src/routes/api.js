@@ -3,16 +3,21 @@
  */
 
 import { sendJson, sendError, readJsonBody } from '../core/http.js';
-import { maskToken } from '../core/token.js';
+import { maskToken, generateId } from '../core/token.js';
+import { resolveStudioTarget } from '../core/commandTarget.js';
 
-/** Actions the Roblox Studio plugin knows how to execute. */
+/** Actions exposed to Arena through REST and MCP. Desktop actions never leave the local host. */
 export const SUPPORTED_ACTIONS = [
   { action: 'ping', description: 'Round-trip check against the Studio plugin', params: {} },
   { action: 'run_luau', description: 'Execute a Luau snippet inside Studio and return its output', params: { code: 'string', timeoutMs: 'number?' } },
   { action: 'get_place_info', description: 'Return PlaceId, GameId, place name and DataModel stats', params: {} },
+  { action: 'play_game', description: 'Start a real Studio playtest (mode play) or server simulation (mode run)', params: { mode: "'play' | 'run'?" } },
+  { action: 'stop_game', description: 'Stop the active Studio playtest/simulation and return to edit mode', params: {} },
+  { action: 'get_play_state', description: 'Read whether Studio is editing, starting or running a playtest', params: {} },
   { action: 'list_instances', description: 'List children of a path, e.g. game.Workspace', params: { path: 'string', depth: 'number?' } },
   { action: 'get_instance', description: 'Read properties of a single instance', params: { path: 'string' } },
   { action: 'create_instance', description: 'Create an instance under a parent path', params: { className: 'string', parent: 'string', properties: 'object?' } },
+  { action: 'insert_model', description: 'Insert an uploaded Roblox Model asset by ID, including Blender/Open-Cloud models', params: { assetId: 'string|number', parent: 'string?', position: 'Vector3?', name: 'string?' } },
   { action: 'set_property', description: 'Set a property on an instance', params: { path: 'string', property: 'string', value: 'any' } },
   { action: 'delete_instance', description: 'Destroy an instance', params: { path: 'string' } },
   { action: 'get_script_source', description: 'Read the source of a Script/LocalScript/ModuleScript', params: { path: 'string' } },
@@ -20,9 +25,34 @@ export const SUPPORTED_ACTIONS = [
   { action: 'get_selection', description: 'Return the current Studio selection', params: {} },
   { action: 'set_selection', description: 'Select instances by path', params: { paths: 'string[]' } },
   { action: 'get_output', description: 'Return recent Studio output/log messages captured by the plugin', params: { limit: 'number?' } },
+  { action: 'get_blender_status', description: 'Check local Blender, Open-Cloud key and Creator configuration on the desktop', scope: 'desktop', params: {} },
+  { action: 'create_blender_mesh', description: 'Build meshes locally in Blender from safe structured objects, export FBX/GLB and optionally upload through Open Cloud', scope: 'desktop', params: { name: 'string', description: 'string?', format: "'fbx' | 'glb'?", upload: 'boolean?', objects: 'Array<mesh | primitive>', creatorId: 'string?', creatorType: "'user' | 'group'?" } },
 ];
 
 const ACTION_NAMES = new Set(SUPPORTED_ACTIONS.map((a) => a.action));
+export const LOCAL_ACTION_NAMES = new Set(SUPPORTED_ACTIONS.filter((entry) => entry.scope === 'desktop').map((entry) => entry.action));
+
+/** Execute a host-local action without sending its secrets or files to Studio. */
+export async function performLocalAction(ctx, { action, params = {}, targetClientId = null, source = 'http' }) {
+  const { session, config, logger } = ctx;
+  const startedAt = Date.now();
+  const command = { id: generateId(8), action, state: 'running', createdAt: startedAt, source, targetClientId };
+  const handler = config.localActions?.[action];
+  session.stats.commandsQueued += 1;
+  if (typeof handler !== 'function') {
+    session.stats.commandsFailed += 1;
+    return { ...command, state: 'failed', ok: false, result: null, error: 'Diese Desktop-Aktion ist nur in der Arena Studio Connecter EXE verfügbar.', durationMs: 0 };
+  }
+  try {
+    const result = await handler(params, { session, targetClientId, source });
+    session.stats.commandsCompleted += 1;
+    return { ...command, state: 'completed', ok: true, result, error: null, durationMs: Date.now() - startedAt };
+  } catch (error) {
+    session.stats.commandsFailed += 1;
+    logger.warn(`local command failed: ${action}`, { error: error.message, targetClientId });
+    return { ...command, state: 'failed', ok: false, result: null, error: error.message, durationMs: Date.now() - startedAt };
+  }
+}
 
 /**
  * @param {object} ctx
@@ -78,15 +108,32 @@ export function createApiRoutes(ctx) {
         return sendError(res, 400, 'INVALID_TARGET', 'Field "targetClientId" must be a non-empty string.');
       }
 
-      const activeClients = session.activeClients();
+      const activeClients = session.editableClients();
       if (targetClientId && !activeClients.some((client) => client.id === targetClientId)) {
         return sendError(res, 409, 'STUDIO_CLIENT_OFFLINE', `Studio client "${targetClientId}" is not connected.`, {
           connectedClientIds: activeClients.map((client) => client.id),
         });
       }
-      if (!targetClientId && activeClients.length > 1) {
+
+      const source = req.headers['x-client-name'] ? String(req.headers['x-client-name']) : 'http';
+      if (LOCAL_ACTION_NAMES.has(action)) {
+        if (isAsync === true) return sendError(res, 400, 'ASYNC_NOT_SUPPORTED', 'Desktop actions are synchronous.');
+        const done = await performLocalAction({ session, queue, logger, config }, {
+          action, params: params ?? {}, targetClientId: targetClientId || null, source,
+        });
+        return sendJson(res, done.ok ? 200 : 502, { ok: done.ok, command: done });
+      }
+
+      const resolved = resolveStudioTarget(session, action, targetClientId || null);
+      if (resolved.error === 'STUDIO_CLIENT_OFFLINE') {
+        return sendError(res, 409, 'STUDIO_CLIENT_OFFLINE', `Studio client "${targetClientId}" is not connected.`);
+      }
+      if (resolved.error === 'PLAYTEST_REPORTER_OFFLINE') {
+        return sendError(res, 409, 'PLAYTEST_REPORTER_OFFLINE', 'Der Playtest startet noch oder sein Server ist nicht mehr verbunden. Warte kurz und versuche Stop erneut.');
+      }
+      if (!targetClientId && resolved.clients.length > 1) {
         return sendError(res, 400, 'TARGET_REQUIRED', 'Multiple Studio Places are open. Set "targetClientId" to select one.', {
-          clients: activeClients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
+          clients: resolved.clients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
         });
       }
 
@@ -94,8 +141,8 @@ export function createApiRoutes(ctx) {
       const { command, promise } = queue.enqueue({
         action,
         params,
-        source: req.headers['x-client-name'] ? String(req.headers['x-client-name']) : 'http',
-        targetClientId: targetClientId || null,
+        source,
+        targetClientId: resolved.targetClientId,
         timeoutMs: Number.isFinite(timeoutMs) ? Math.min(Math.max(timeoutMs, 1000), 300_000) : config.commandTimeoutMs,
       });
 

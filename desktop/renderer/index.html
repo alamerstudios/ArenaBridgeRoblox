@@ -80,7 +80,7 @@
       </button>
 
       <div class="account" id="account-card">
-        <div class="avatar" id="account-avatar">?</div>
+        <div class="avatar" id="account-avatar"><span id="account-avatar-initial">?</span><img id="account-avatar-image" class="hidden" alt="" /></div>
         <div class="account-copy">
           <small>STUDIO ACCOUNT</small>
           <strong id="account-name">Nicht verbunden</strong>
@@ -176,12 +176,34 @@
                 <div><strong>Benötigte Berechtigungen</strong><span>So wenig Zugriff wie möglich vergeben</span></div>
               </div>
               <ul>
-                <li><span>Experience-Zugriff</span><b>Nur die Places auswählen, die du bearbeiten willst</b></li>
-                <li><span>Place Publishing</span><b>Write · nur nötig, wenn du per Open Cloud veröffentlichst</b></li>
-                <li><span>Nicht erforderlich</span><b>Data Stores, Messaging, Memory Stores und Assets</b></li>
+                <li><span>Assets API</span><b>Read + Write · für Blender-Exporte und Upload-Status</b></li>
+                <li><span>Creator-Zugriff</span><b>Nur dein Account oder die gewünschte Gruppe</b></li>
+                <li><span>Place Publishing</span><b>Write · optional und für Mesh-Uploads nicht nötig</b></li>
+                <li><span>Nicht erforderlich</span><b>Data Stores, Messaging und Memory Stores</b></li>
               </ul>
               <p>Die Live-Verbindung zu einer geöffneten Studio-Place funktioniert auch ohne API Key. Der Key wird niemals in den Arena-Prompt oder den Cloudflare-Tunnel geschrieben.</p>
             </div>
+
+            <details class="cloud-tutorial">
+              <summary><span>Tutorial: Key für Blender-Mesh-Uploads einrichten</span><b>Schritt für Schritt</b></summary>
+              <div class="tutorial-content">
+                <ol>
+                  <li><div><strong>Creator Dashboard öffnen</strong><span>Bei Roblox anmelden und unter <b>Open Cloud → API Keys</b> auf <b>Create API Key</b> klicken.</span><button type="button" class="inline-link" data-external="https://create.roblox.com/dashboard/credentials">API-Keys im Dashboard öffnen ↗</button></div></li>
+                  <li><div><strong>Key benennen und Creator wählen</strong><span>Z. B. <b>Arena Blender Meshes</b>. Wähle deinen eigenen Account oder nur die Gruppe, in deren Inventar die Modelle hochgeladen werden dürfen.</span></div></li>
+                  <li><div><strong>Assets API hinzufügen</strong><span>Unter <b>Access Permissions</b> bei <b>Select API System</b> die Option <b>Assets</b> wählen und auf <b>Add API System</b> klicken.</span></div></li>
+                  <li><div><strong>Diese zwei Rechte einschalten</strong><span>Bei den Assets-Operations <b>Read</b> und <b>Write</b> aktivieren. Write lädt das Modell hoch; Read liest den Status der Upload-Operation und die Asset-ID.</span></div></li>
+                  <li><div><strong>Sicherheit einstellen</strong><span>IP-Beschränkung möglichst auf deine feste öffentliche IP setzen. Bei wechselnder IP den Schalter <b>Restrict IP addresses</b> aus lassen. Ein Ablaufdatum ist empfohlen, aber optional.</span></div></li>
+                  <li><div><strong>Key erzeugen und hier speichern</strong><span>Auf <b>Save &amp; Generate Key</b> klicken, den einmalig angezeigten Key kopieren und oben einfügen. Danach unten Creator-ID und Blender-Pfad konfigurieren.</span></div></li>
+                </ol>
+                <div class="switch-checklist">
+                  <p><span>AN</span><b>Assets → Read</b><small>Upload-Status und Asset-ID lesen</small></p>
+                  <p><span>AN</span><b>Assets → Write</b><small>FBX-/GLB-Modelle hochladen</small></p>
+                  <p class="off"><span>AUS</span><b>Data Stores, Messaging, Memory Stores</b><small>Für Blender nicht benötigt</small></p>
+                  <p class="off"><span>AUS</span><b>Place Publishing / universe-places</b><small>Nur aktivieren, wenn du Places per Open Cloud veröffentlichen willst</small></p>
+                </div>
+                <button type="button" class="inline-link" data-external="https://create.roblox.com/docs/cloud/guides/usage-assets">Offizielle Assets-API-Dokumentation ↗</button>
+              </div>
+            </details>
           </article>
 
           <article class="settings-card compact-card">
@@ -223,6 +245,56 @@
               <svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2"/><rect x="5" y="10" width="14" height="11" rx="2"/></svg>
               <p><strong>Deine Daten bleiben lokal.</strong><span>Session-Token wechseln bei jedem Start. API Keys werden über Windows verschlüsselt.</span></p>
             </div>
+          </article>
+
+          <article class="settings-card compact-card blender-card">
+            <div class="card-icon purple">
+              <svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m8 9 4-2.3 4 2.3v4.7L12 16l-4-2.3V9Z"/></svg>
+            </div>
+            <div class="card-title"><div><h2>Blender &amp; Mesh-Upload</h2><p>Lokal erzeugen · über Open Cloud hochladen</p></div><span class="config-badge" id="blender-badge">PRÜFE …</span></div>
+            <div class="detail-row"><span>Blender</span><strong id="blender-status">Wird gesucht …</strong></div>
+            <p class="card-note">Arena AI erzeugt strukturierte Meshes mit deiner lokalen Blender-Installation. Open Cloud übernimmt nur den Upload als Roblox-Modell; es werden keine beliebigen Python-Skripte aus dem Tunnel ausgeführt.</p>
+            <label class="field-label" for="blender-path">Pfad zu blender.exe · leer = automatisch suchen</label>
+            <input class="text-field" type="text" id="blender-path" spellcheck="false" placeholder="C:\Program Files\Blender Foundation\Blender 5.0\blender.exe" />
+            <div class="creator-fields">
+              <div>
+                <label class="field-label" for="creator-type">Creator</label>
+                <select id="creator-type"><option value="user">Roblox-Account</option><option value="group">Gruppe</option></select>
+              </div>
+              <div>
+                <label class="field-label" for="creator-id">User-/Group-ID</label>
+                <input class="text-field" type="text" id="creator-id" inputmode="numeric" placeholder="Z. B. 12345678" />
+              </div>
+            </div>
+            <p class="card-note">Bei einem verbundenen Studio-Account kann die User-ID automatisch übernommen werden. Für Gruppen-Uploads sind Group-ID und passende Gruppenrechte erforderlich.</p>
+            <div class="settings-actions">
+              <button type="button" class="primary-small" id="save-blender">Mesh-Einstellungen speichern</button>
+              <button type="button" class="secondary-small" id="detect-blender">Automatisch suchen</button>
+              <button type="button" class="text-button" data-external="https://www.blender.org/download/">Blender herunterladen ↗</button>
+            </div>
+            <div class="path-box" id="blender-path-status">Noch kein Blender-Pfad erkannt</div>
+          </article>
+
+          <article class="settings-card compact-card updates-card">
+            <div class="card-icon cyan">
+              <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/><path d="M12 8v4l3 2"/></svg>
+            </div>
+            <div class="card-title"><div><h2>App-Updates</h2><p>Ohne erneute Installation</p></div><span class="config-badge" id="update-badge">BEREIT</span></div>
+            <div class="detail-row"><span>Installiert</span><strong id="update-current">v—</strong></div>
+            <div class="detail-row"><span>Neueste Version</span><strong id="update-latest">Noch nicht geprüft</strong></div>
+            <p class="update-message" id="update-message">Die App sucht automatisch nach neuen Releases.</p>
+            <div class="update-progress hidden" id="update-progress"><i></i></div>
+            <div class="settings-actions">
+              <button type="button" class="secondary-small" id="check-update">Nach Update suchen</button>
+              <button type="button" class="primary-small hidden" id="install-update">Installieren &amp; neu starten</button>
+              <button type="button" class="text-button" data-external="https://github.com/alamerstudios/ArenaBridgeRoblox/releases">Releases ↗</button>
+            </div>
+            <label class="toggle-row">
+              <div><strong>Updates automatisch laden</strong><span>Beim Start und alle sechs Stunden prüfen; Installation erst nach deinem Klick</span></div>
+              <input type="checkbox" id="auto-update" />
+              <i></i>
+            </label>
+            <p class="card-note">Portable EXE: Download und SHA-256-Prüfung, dann Austausch nach dem Schließen mit Sicherungskopie. Installer-Version: SHA-512-geprüfte Electron-Update-Metadaten und Blockmap-Download.</p>
           </article>
         </div>
       </section>

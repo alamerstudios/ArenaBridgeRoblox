@@ -1,6 +1,6 @@
 {
   "name": "arena-studio-connecter",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Arena Studio Connecter - sichere Desktop-Bridge zwischen Arena Agent und Roblox Studio",
   "type": "module",
   "main": "desktop/main.js",
@@ -17,6 +17,7 @@
     "dist:win": "npm run prepare:cloudflared && electron-builder --win nsis portable --x64",
     "dist:portable": "npm run prepare:cloudflared && electron-builder --win portable --x64",
     "prepare:standalone": "node scripts/prepare-standalone.mjs",
+    "hash:release": "node scripts/hash-release.mjs",
     "dist:standalone": "node scripts/build-standalone.mjs",
     "dist:download": "npm run dist:standalone && node scripts/build-download-exe.mjs"
   },
@@ -86,7 +87,15 @@
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "Arena-Studio-Connecter-Portable-${version}-${arch}.${ext}"
+      "artifactName": "Arena-Studio-Connecter-Electron-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "alamerstudios",
+      "repo": "ArenaBridgeRoblox"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }

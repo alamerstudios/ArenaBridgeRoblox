@@ -22,9 +22,19 @@ import { CloudflareTunnel } from '../desktop/cloudflareTunnel.js';
 import { installStudioPlugin } from '../desktop/pluginInstaller.js';
 import { WindowsSettingsStore } from './windowsSettingsStore.js';
 import { ensureCloudflared } from './cloudflaredBootstrap.js';
+import { RobloxMetadataService } from '../desktop/robloxMetadata.js';
+import { BlenderService } from '../src/services/blenderService.js';
+import { UpdateManager } from '../desktop/updateManager.js';
 
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.1.0';
 const ARENA_URL = 'https://arena.ai/agent';
+const ALLOWED_EXTERNAL_URLS = new Set([
+  ARENA_URL,
+  'https://create.roblox.com/dashboard/credentials',
+  'https://create.roblox.com/docs/cloud/guides/usage-assets',
+  'https://www.blender.org/download/',
+  'https://github.com/alamerstudios/ArenaBridgeRoblox/releases',
+]);
 const appData = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Arena Studio Connecter');
 const runtimeDir = path.join(appData, 'runtime');
 const require = createRequire(import.meta.url);
@@ -49,6 +59,13 @@ const settings = new WindowsSettingsStore({
   filePath: path.join(appData, 'settings.json'),
   executablePath: process.execPath,
 });
+const metadata = new RobloxMetadataService();
+const blender = new BlenderService({ settings, workDirectory: path.join(appData, 'meshes') });
+const updates = new UpdateManager({
+  currentVersion: APP_VERSION,
+  executablePath: process.execPath,
+  dataDirectory: path.join(appData, 'updates'),
+});
 
 function materialize(asset, destination, minimumSize = 1) {
   try {
@@ -66,7 +83,8 @@ const cloudflaredPath = path.join(runtimeDir, 'cloudflared.exe');
 const iconPath = materialize(iconAsset, path.join(runtimeDir, 'icon.ico'), 10_000);
 
 function snapshot() {
-  const places = bridge?.session.activeClients(65_000) ?? [];
+  const places = bridge?.session.editableClients(65_000) ?? [];
+  const enrichedPlaces = metadata.decorate(places);
   return {
     app: { name: 'Arena Studio Connecter', version: APP_VERSION, platform: 'win32', packaged: true },
     bridge: {
@@ -77,8 +95,10 @@ function snapshot() {
     },
     tunnel: tunnel?.snapshot() ?? tunnelBootstrapState,
     plugin: { ...pluginState, connected: places.length > 0, connectedPlaces: places.length, discovery: { ...discoveryState, ...(discovery?.diagnostics?.() ?? {}) } },
-    places,
+    places: enrichedPlaces,
     settings: settings.publicState(),
+    blender: blender.snapshot(),
+    updates: updates.snapshot(),
     now: Date.now(),
   };
 }
@@ -114,7 +134,7 @@ function readBody(req) {
 }
 
 function openExternal(url) {
-  if (url !== ARENA_URL) throw new Error('External URL blocked.');
+  if (!ALLOWED_EXTERNAL_URLS.has(String(url))) throw new Error('External URL blocked.');
   spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', url], { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
 }
 
@@ -162,22 +182,43 @@ async function handleApi(req, res, pathname) {
   const body = await readBody(req);
   switch (pathname) {
     case '/api/copy-prompt': {
-      const client = bridge?.session.activeClients(65_000).find((entry) => entry.id === body.clientId);
+      const client = bridge?.session.editableClients(65_000).find((entry) => entry.id === body.clientId);
       const tunnelUrl = tunnel?.snapshot().url;
       if (!client) throw new Error('Diese Place ist nicht mehr verbunden.');
       if (!tunnelUrl) throw new Error('Der Cloudflare-Tunnel ist noch nicht online.');
-      copyToClipboard(buildAgentPrompt({ tunnelUrl, token: bridge.session.token, client }));
+      const [enrichedClient] = metadata.decorate([client]);
+      copyToClipboard(buildAgentPrompt({ tunnelUrl, token: bridge.session.token, client: enrichedClient }));
       return send(res, 200, { ok: true, guideUrl: buildGuideUrl(tunnelUrl, client.id), message: 'Arena-Prompt wurde kopiert.' });
     }
     case '/api/open-arena': openExternal(ARENA_URL); return send(res, 200, { ok: true });
+    case '/api/open-external': openExternal(String(body.url)); return send(res, 200, { ok: true });
+    case '/api/check-update': return send(res, 200, await updates.checkForUpdates());
+    case '/api/install-update': {
+      const result = await updates.installUpdate();
+      send(res, 200, result);
+      setTimeout(() => nativeWindow?.close(), 150);
+      return;
+    }
     case '/api/retry-tunnel': return send(res, 200, await retryTunnel());
     case '/api/reinstall-plugin': return send(res, 200, installPlugin());
     case '/api/show-plugin':
       if (pluginState.path) spawn('explorer.exe', ['/select,', pluginState.path], { detached: true, windowsHide: true }).unref();
       return send(res, 200, { ok: Boolean(pluginState.path) });
-    case '/api/save-api-key': return send(res, 200, settings.saveApiKey(body.value));
+    case '/api/save-api-key': {
+      const result = settings.saveApiKey(body.value);
+      bridge?.logger.addSecret(settings.getApiKey());
+      return send(res, 200, result);
+    }
     case '/api/clear-api-key': return send(res, 200, settings.clearApiKey());
     case '/api/launch-at-login': return send(res, 200, settings.setLaunchAtLogin(body.enabled));
+    case '/api/auto-update':
+      settings.setAutoUpdate(body.enabled);
+      updates.startAutomatic(() => settings.getAutoUpdate());
+      return send(res, 200, settings.publicState());
+    case '/api/save-blender':
+      settings.saveBlenderConfig(body.value ?? {});
+      await blender.refreshStatus();
+      return send(res, 200, { settings: settings.publicState(), blender: blender.snapshot() });
     case '/api/window/minimize': nativeWindow?.minimize(); return send(res, 200, { ok: true });
     case '/api/window/maximize':
       if (maximized) nativeWindow?.unmaximize(); else nativeWindow?.maximize();
@@ -223,9 +264,11 @@ async function startServices() {
     openBrowser: false,
     logFile: path.join(appData, 'logs', 'bridge.log'),
     sessionFile: path.join(runtimeDir, 'session.json'),
+    localActions: blender.localActions(),
   });
   try {
     await bridge.start();
+    bridge.logger.addSecret(settings.getApiKey());
     bridgeState = { status: 'online', message: 'Lokale Bridge läuft.' };
   } catch (error) {
     bridgeState = { status: 'error', message: `Bridge-Start fehlgeschlagen: ${error.message}` };
@@ -273,6 +316,7 @@ function handleWindowMessage(raw, sourceUrl) {
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  updates.stopAutomatic();
   await tunnel?.stop().catch(() => {});
   await discovery?.stop().catch(() => {});
   await bridge?.stop().catch(() => {});
@@ -314,6 +358,8 @@ try {
   nativeWindow.onMove((x, y) => { windowPosition = { x, y }; });
   nativeWindow.onClose(() => { void shutdown(); });
   nativeWindow.loadUrl(controlOrigin);
+  updates.startAutomatic(() => settings.getAutoUpdate());
+  void blender.refreshStatus();
   void startServices();
 
   process.on('SIGINT', () => { void shutdown(); });
