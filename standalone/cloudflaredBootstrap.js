@@ -46,7 +46,7 @@ async function fetchBytes(fetchImpl, url) {
   const response = await fetchImpl(url, {
     redirect: 'follow',
     signal: AbortSignal.timeout(120_000),
-    headers: { 'User-Agent': 'Arena-Studio-Connecter/2.1.0' },
+    headers: { 'User-Agent': 'Arena-Studio-Connecter/2.1.1' },
   });
   if (!response.ok) throw new Error(`Download antwortete mit HTTP ${response.status}.`);
   return Buffer.from(await response.arrayBuffer());

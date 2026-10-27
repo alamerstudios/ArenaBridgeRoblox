@@ -533,13 +533,13 @@ function wireEvents() {
 }
 
 const demoState = {
-  app: { version: '2.1.0' },
+  app: { version: '2.1.1' },
   bridge: { status: 'online', message: 'Lokale Bridge läuft.' },
   tunnel: { status: 'online', url: 'https://studio-arena-demo.trycloudflare.com', message: 'Cloudflare-Tunnel ist online.' },
   plugin: { status: 'installed', installed: true, connected: true, connectedPlaces: 2, message: 'Plugin ist installiert und aktuell.', path: 'C:\\Users\\Arena\\AppData\\Local\\Roblox\\Plugins\\ArenaStudioConnecter.rbxmx' },
   settings: { hasApiKey: true, apiKeyMasked: 'rblx-••••••••7K2A', encryptionAvailable: true, launchAtLogin: true, autoUpdate: true, blender: { blenderPath: '', creatorType: 'user', creatorId: '48192017' } },
   blender: { status: 'online', available: true, version: 'Blender 5.0', path: 'C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe', message: 'Blender ist bereit.' },
-  updates: { status: 'up-to-date', currentVersion: '2.1.0', latestVersion: '2.1.0', message: 'Version 2.1.0 ist aktuell.', progress: 0 },
+  updates: { status: 'up-to-date', currentVersion: '2.1.1', latestVersion: '2.1.1', message: 'Version 2.1.1 ist aktuell.', progress: 0 },
   places: [
     { id: 'studio-a91e4c', placeName: 'Neon District', placeId: 18402938401, gameId: 6129473051, placeVersion: 87, version: '2.0.0', accountName: 'ArenaBuilder', accountDisplayName: 'Arena Builder', accountUserId: 48192017 },
     { id: 'studio-c44f2a', placeName: 'Obby Prototype', placeId: 9981726304, gameId: 4430291882, placeVersion: 12, version: '2.0.0', accountName: 'ArenaBuilder', accountDisplayName: 'Arena Builder', accountUserId: 48192017 },

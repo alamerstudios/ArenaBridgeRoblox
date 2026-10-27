@@ -10,7 +10,7 @@
  */
 
 import { sendJson, sendError, readJsonBody } from '../core/http.js';
-import { SUPPORTED_ACTIONS, LOCAL_ACTION_NAMES, performLocalAction } from './api.js';
+import { SUPPORTED_ACTIONS, LOCAL_ACTION_NAMES, performLocalAction, commandFailure } from './api.js';
 import { resolveStudioTarget } from '../core/commandTarget.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -151,7 +151,7 @@ export function createMcpRoutes(ctx) {
         return rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, logging: {} },
-          serverInfo: { name: 'arena-studio-connecter', version: '2.1.0' },
+          serverInfo: { name: 'arena-studio-connecter', version: '2.1.1' },
           instructions: 'Tools run inside the connected Roblox Studio session. Start the Arena Studio Connecter plugin in Studio first.',
         });
 
@@ -181,9 +181,6 @@ export function createMcpRoutes(ctx) {
           done = await performLocalAction(ctx, { action: name, params: args, targetClientId, source: 'mcp' });
         } else {
           const resolved = resolveStudioTarget(session, name, targetClientId);
-          if (resolved.error === 'PLAYTEST_REPORTER_OFFLINE') {
-            return rpcError(id, -32005, 'Der Playtest-Server ist noch nicht bereit. Warte kurz und versuche Stop erneut.');
-          }
           if (!targetClientId && resolved.clients.length > 1) {
             return rpcError(id, -32602, 'Multiple Studio Places are open. Send X-Studio-Client-Id to select one.', {
               clients: resolved.clients.map((client) => ({ id: client.id, placeName: client.placeName, placeId: client.placeId ?? client.place })),
@@ -198,13 +195,24 @@ export function createMcpRoutes(ctx) {
             timeoutMs: config.commandTimeoutMs,
           });
           done = await promise;
+          if (done.ok && name === 'play_game') {
+            const mode = done.result?.mode ?? args?.mode ?? 'play';
+            session.touchClient(resolved.targetClientId, {
+              playtestActive: true,
+              playtestMode: mode,
+              isRunning: mode === 'simulation',
+              editModeActive: mode === 'simulation',
+            });
+          }
           if (done.ok) session.stats.commandsCompleted += 1; else session.stats.commandsFailed += 1;
         }
 
         if (!done.ok) {
+          const failure = commandFailure(done, LOCAL_ACTION_NAMES.has(name) ? 'desktop' : 'studio');
           return rpcResult(id, {
             isError: true,
-            content: [{ type: 'text', text: `Command "${name}" failed: ${done.error}` }],
+            content: [{ type: 'text', text: `Command "${name}" failed (${failure.code}): ${failure.message}` }],
+            structuredContent: { ok: false, command: done, error: failure },
           });
         }
 
@@ -252,7 +260,7 @@ export function createMcpRoutes(ctx) {
         protocol: 'jsonrpc-2.0',
         protocolVersion: PROTOCOL_VERSION,
         transport: 'http',
-        serverInfo: { name: 'arena-studio-connecter', version: '2.1.0' },
+        serverInfo: { name: 'arena-studio-connecter', version: '2.1.1' },
         tools: tools.map((t) => ({ name: t.name, description: t.description })),
         usage: 'POST JSON-RPC 2.0 requests to this same URL with the bridge token in the Authorization header.',
       });

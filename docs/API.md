@@ -31,8 +31,8 @@ Legacy-Dashboard erhalten. Die Prüfung erfolgt konstant-zeitlich (SHA-256 + `ti
 | 400 | `INVALID_BODY`, `MISSING_ACTION`, `UNKNOWN_ACTION`, `INVALID_PARAMS`, `INVALID_TARGET`, `TARGET_REQUIRED` | Ungültige Eingabe/Zielauswahl |
 | 404 | `NOT_FOUND`, `COMMAND_NOT_FOUND` | Route bzw. Befehl unbekannt |
 | 409 | `STUDIO_CLIENT_OFFLINE`, `WRONG_STUDIO_CLIENT` | Ziel-Place getrennt oder falscher Plugin-Client |
-| 502 | — | Studio oder eine lokale Desktop-Aktion hat einen Fehler zurückgemeldet |
-| 504 | — | Studio hat nicht rechtzeitig geantwortet |
+| 200 | `STUDIO_ACTION_FAILED`, `LOCAL_ACTION_FAILED` | Aktion wurde ausgeführt und ist mit detailliertem Fehler fehlgeschlagen (`ok: false`) |
+| 504 | `COMMAND_TIMEOUT` | Studio hat nicht rechtzeitig geantwortet |
 
 Fehlerformat:
 
@@ -96,6 +96,21 @@ Schickt einen Befehl an Roblox Studio und wartet auf das Ergebnis.
     "id": "986ff1b0951c", "action": "run_luau", "state": "completed",
     "durationMs": 7, "ok": true, "result": { "returned": 2, "output": [] }, "error": null } }
 ```
+
+```jsonc
+// Response 200: Die Aktion lief, ist aber in Studio fehlgeschlagen.
+{ "ok": false, "command": { "id": "986ff1b0951c", "action": "run_luau", "state": "failed", "ok": false },
+  "error": {
+    "code": "STUDIO_ACTION_FAILED",
+    "message": "Luau runtime failed: Workspace.Script:2: example error\nstack traceback: ...",
+    "details": { "action": "run_luau", "commandId": "986ff1b0951c", "pluginVersion": "2.1.1" }
+  } }
+```
+
+Ein Aktionsfehler ist ausdrücklich **kein** pauschaler HTTP-`502`. Synchrone Responses,
+`GET /command/:id` und MCP verwenden denselben Fehler mit `code`, eigentlicher `message` und
+`details`. Bei MCP ist zusätzlich `isError: true`. Nur ein echter Warte-Timeout liefert HTTP
+`504` mit `COMMAND_TIMEOUT`.
 
 `targetClientId` wählt die exakte offene Place. Bei mehr als einer verbundenen Studio-Session
 ist das Feld Pflicht; unbekannte oder getrennte Clients werden abgewiesen. Mit `"async": true`
@@ -175,8 +190,8 @@ Client <--Ergebnis-- Bridge <--POST /studio/result---+
 | `run_luau` | `code`, `timeoutMs?` | `returned`, `output[]`, `durationMs` |
 | `get_place_info` | — | `placeId`, `gameId`, tatsächlicher `name`, `placeVersion`, … |
 | `play_game` | `mode?`: `play` (Standard) oder `run` | Start angenommen, Modus und aktueller Playtest-Status |
-| `get_play_state` | — | `playtestActive`, `starting`, `isRunning`, `editModeActive`, Fehlerstatus |
-| `stop_game` | — | Stop des aktiven Playtests über den Server-Reporter |
+| `get_play_state` | — | `playtestActive`, `starting`, `isRunning`, `editModeActive`, `reporterReady`, Fehlerstatus |
+| `stop_game` | — | `accepted/ending`; Stop wurde vom Playtest-Plugin übernommen |
 | `insert_model` | `assetId`, `parent?`, `name?`, `position?` | Eingefügte Asset-/Instanzpfade |
 | `list_instances` | `path`, `depth?` (0–5) | Baum aus `name`/`className`/`path`/`children` |
 | `get_instance` | `path` | `className`, `properties`, `childCount` |
@@ -189,10 +204,13 @@ Client <--Ergebnis-- Bridge <--POST /studio/result---+
 | `set_selection` | `paths[]` | `selected`, `missing[]` |
 | `get_output` | `limit?` | Zuletzt von Studio geloggte Meldungen |
 
-`play_game` meldet den angenommenen Start sofort zurück. Der eigentliche Studio-Aufruf wartet im
-Plugin bis zum Testende. Während eines echten Playtests leitet die Bridge `stop_game` von der
-Editor-Client-ID an den temporären `play-server` weiter. Dieser ist in `/status` nicht als zweite
-Place sichtbar und akzeptiert nur `ping`, `get_play_state` und `stop_game`.
+`play_game` meldet den angenommenen Start sofort zurück; die Testerzeugung läuft asynchron. Die
+zweite Instanz desselben Plugins im Playtest-Datenmodell verbindet sich selbst mit derselben
+Bridge. Die Bridge leitet `stop_game` von der Editor-Client-ID an deren `play-server`-Reporter
+weiter. Ein Stop während des Startübergangs wird für diese bekannte ID eingereiht. Der Reporter
+ist in `/status` nicht als zweite Place sichtbar und akzeptiert nur `ping`, `get_play_state` und
+`stop_game`. Eine erfolgreiche Stop-Antwort bedeutet `accepted/ending`; das endgültige Ende wird
+mit `get_play_state` geprüft.
 
 Beispiel für den Upload-Ablauf nach `create_blender_mesh`:
 

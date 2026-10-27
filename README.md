@@ -10,7 +10,7 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 ## Download
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.1.0/downloads/Arena-Studio-Connecter-Portable-2.1.0-x64.exe">
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.1.1/downloads/Arena-Studio-Connecter-Portable-2.1.1-x64.exe">
     <img src="docs/assets/download-windows.svg" width="372" alt="Arena Studio Connecter als portable Windows-x64-EXE herunterladen" />
   </a>
   <br />
@@ -18,9 +18,9 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.1.0/downloads/Arena-Studio-Connecter-Portable-2.1.0-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
+  <a href="https://raw.githubusercontent.com/alamerstudios/ArenaBridgeRoblox/v2.1.1/downloads/Arena-Studio-Connecter-Portable-2.1.1-x64.exe.sha256.txt">SHA-256-Prüfsumme</a>
   ·
-  <a href="https://github.com/alamerstudios/ArenaBridgeRoblox/releases/tag/v2.1.0">Release-Details</a>
+  <a href="https://github.com/alamerstudios/ArenaBridgeRoblox/releases/tag/v2.1.1">Release-Details</a>
   ·
   <a href="#windows-exe-verwenden">Schnellstart</a>
 </p>
@@ -47,7 +47,7 @@ fertigen Arena-Prompt. Im Roblox-Plugin müssen **keine URL und kein Token** ein
 
 ## Windows-EXE verwenden
 
-1. `Arena-Studio-Connecter-Portable-2.1.0-x64.exe` starten. Die portable App muss nicht installiert werden.
+1. `Arena-Studio-Connecter-Portable-2.1.1-x64.exe` starten. Die portable App muss nicht installiert werden.
    Bei einem nicht signierten Entwicklungsbuild kann Windows SmartScreen einmalig nachfragen.
 2. **Arena Studio Connecter** öffnet Bridge, Tunnel und Plugin automatisch. Beim ersten Start
    wird das SHA-256-verifizierte Cloudflared-Modul geladen; das kann je nach Verbindung kurz dauern.
@@ -146,16 +146,28 @@ Plugin-Kontakt“), wie weit die Verbindung bereits gekommen ist. Prüfe in dies
 
 Die Aktionen `play_game`, `get_play_state` und `stop_game` stehen über REST und MCP bereit.
 `play_game` startet mit `{ "mode": "play" }` einen normalen Play-Client oder mit
-`{ "mode": "run" }` eine Server-Simulation ohne Avatar. Vor dem Start kopiert das Plugin ein
-kleines, temporäres Server-Script in das Playtest-Datenmodell. Dieses registriert keine zweite
-Place und akzeptiert ausschließlich Status/Stop. Stop ruft dort `StudioTestService:EndTest(...)`
-auf; der Editor bleibt das Ziel aller Build-Befehle.
+`{ "mode": "run" }` eine Server-Simulation ohne Avatar. Die bereits von Studio geladene zweite
+**Plugin-Instanz im Playtest-Datenmodell** übernimmt Status und Stop. Sie registriert keine
+zweite Place und benötigt kein injiziertes Server-Script. Stop wird während des Starts für ihre
+bekannte Client-ID eingereiht und ruft anschließend `StudioTestService:EndTest(...)` auf; der
+Editor bleibt das Ziel aller dauerhaften Build-Befehle.
 
 Das Starten ist asynchron: Eine erfolgreiche `play_game`-Antwort bedeutet, dass Studio den
-Start angenommen hat. Mit `get_play_state` prüft Arena, ob der Server bereits bereit ist. Nach
-einem Playtest verwirft Studio dessen Datenmodell; dauerhafte Änderungen deshalb immer erst im
-Edit-Modus ausführen. Auf sehr alten Studio-Versionen ohne `StudioTestService` bleibt eine
-RunService-Simulation als gekennzeichneter Fallback erhalten.
+Start angenommen hat. `get_play_state` meldet nach der Reporter-Verbindung `reporterReady: true`.
+Eine erfolgreiche Stop-Antwort bestätigt zunächst `accepted/ending`; das endgültige Ende wird
+über den Playtest-Status geprüft. Nach einem Playtest verwirft Studio dessen Datenmodell;
+dauerhafte Änderungen deshalb immer erst im Edit-Modus ausführen. Auf sehr alten
+Studio-Versionen ohne `StudioTestService` bleibt eine RunService-Simulation als gekennzeichneter
+Fallback erhalten.
+
+### Maschinenlesbare Aktionsergebnisse
+
+Jede ausgeführte Aktion liefert `ok`, `command` und entweder `result` oder `error`. Ein Fehler
+**innerhalb** einer Studio- oder Desktop-Aktion ist kein Bad Gateway: REST antwortet mit HTTP
+`200`, `ok: false` und `error.code` (`STUDIO_ACTION_FAILED` bzw. `LOCAL_ACTION_FAILED`).
+`error.message` enthält die eigentliche Meldung inklusive Studio-Traceback; `error.details`
+enthält unter anderem Aktion, Befehls-ID und Plugin-Version. Echte Timeouts bleiben HTTP
+`504`/`COMMAND_TIMEOUT`. MCP setzt zusätzlich `isError: true` und liefert dieselbe Struktur.
 
 ---
 
@@ -297,7 +309,7 @@ npm-Pakete für Bun 1.4.3 und das native Windows-WebView2-Modul, verifiziert die
 per SHA-256 und cross-kompiliert anschließend eine direkt startbare EXE:
 
 ```text
-release/Arena-Studio-Connecter-Portable-2.1.0-x64.exe
+release/Arena-Studio-Connecter-Portable-2.1.1-x64.exe
 ```
 
 `npm run dist:download` übernimmt exakt diese Datei nach `downloads/` und erzeugt die
@@ -306,7 +318,7 @@ Cloudflared 2026.8.2 wird beim ersten App-Start aus der offiziellen Quelle oder 
 npm-Fallback geladen und vor der Ausführung gegen den fest hinterlegten SHA-256-Wert geprüft.
 
 Der alternative Electron-Build erzeugt zusätzlich
-`Arena-Studio-Connecter-Setup-2.1.0-x64.exe`, `latest.yml`, Blockmaps und eine separat benannte
+`Arena-Studio-Connecter-Setup-2.1.1-x64.exe`, `latest.yml`, Blockmaps und eine separat benannte
 Electron-Portable-EXE. Die temporären Build-Ausgaben unter `release/` sind gitignoriert; die
 direkt startbare Haupt-EXE unter `downloads/` wird versioniert.
 

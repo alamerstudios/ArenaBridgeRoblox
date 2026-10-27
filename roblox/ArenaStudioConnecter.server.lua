@@ -27,11 +27,9 @@ local UserService = game:GetService("UserService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local InsertService = game:GetService("InsertService")
 local StudioTestService = game:GetService("StudioTestService")
-local ServerScriptService = game:GetService("ServerScriptService")
-local ChangeHistoryService = game:GetService("ChangeHistoryService")
 
 local PLUGIN_NAME = "Arena Studio Connecter"
-local PLUGIN_VERSION = "2.1.0"
+local PLUGIN_VERSION = "2.1.1"
 local DISCOVERY_URL = "http://127.0.0.1:32192/v1/session"
 local POLL_IDLE_WAIT = 0.25
 local RECONNECT_WAIT = 2.5
@@ -52,15 +50,11 @@ local state = {
     playtestStarting = false,
     playtestMode = nil :: string?,
     playtestError = nil :: string?,
+    reporterEditClientId = nil :: string?,
 }
 
--- Studio kann lokale Plugins zusätzlich im Playtest-Datenmodell laden. Diese
--- zweite Instanz ist keine weitere Place. Der separate, temporäre Server-
--- Reporter übernimmt dort ausschließlich den sicheren Stop-Rückkanal.
-if RunService:IsStudio() and RunService:IsRunning() then
-    print(string.format("[%s] Playtest-Datenmodell erkannt - keine doppelte Place-Registrierung.", PLUGIN_NAME))
-    return
-end
+-- Die zweite Plugin-Instanz im Playtest-Datenmodell wird nach den
+-- HTTP-Hilfsfunktionen als Rückkanal gestartet, nicht als weitere Place.
 
 local outputBuffer: { { level: string, message: string, at: number } } = {}
 local MAX_OUTPUT = 200
@@ -272,6 +266,186 @@ local function readPlaceName(): string
     return cache.name
 end
 
+-- ===========================================================================
+-- Playtest reporter running in Studio's second PLUGIN DataModel
+-- ===========================================================================
+
+local function reporterPlayState(): any
+    local players = 0
+    pcall(function()
+        players = #Players:GetPlayers()
+    end)
+    return {
+        playtestActive = RunService:IsRunning(),
+        reporterReady = true,
+        starting = false,
+        mode = state.playtestMode or "play",
+        isRunning = RunService:IsRunning(),
+        isEdit = false,
+        editModeActive = false,
+        studioTestAvailable = true,
+        players = players,
+        dataModelRole = "play-server",
+        error = nil,
+    }
+end
+
+local function reporterHandshake(): (boolean, any)
+    local account = readAccount()
+    return request("POST", "/studio/handshake", {
+        clientId = state.clientId,
+        name = "Roblox Studio Playtest Plugin",
+        version = PLUGIN_VERSION,
+        place = tostring(game.PlaceId),
+        placeId = game.PlaceId,
+        placeName = readPlaceName(),
+        gameId = game.GameId,
+        placeVersion = game.PlaceVersion,
+        studioVersion = version(),
+        accountUserId = account.userId,
+        accountName = account.username,
+        accountDisplayName = account.displayName,
+        isEdit = false,
+        isRunning = true,
+        editModeActive = false,
+        dataModelRole = "play-server",
+        editClientId = state.reporterEditClientId,
+        playtestActive = true,
+        playtestMode = state.playtestMode,
+    })
+end
+
+local function handleReporterCommand(command: any): boolean
+    local action = tostring(command.action or "")
+    if action == "stop_game" then
+        -- EndTest kehrt laut Studio-Vertrag sofort zurueck; der Teardown ist
+        -- asynchron. Dadurch kann ein synchroner Fehler noch maschinenlesbar
+        -- gemeldet werden, statt Stop vor seiner Ausfuehrung als Erfolg zu buchen.
+        local stopped, stopError = xpcall(function()
+            StudioTestService:EndTest("Arena AI Stop")
+            return true
+        end, function(handlerError)
+            return debug.traceback(tostring(handlerError), 2)
+        end)
+        local payload: any
+        if stopped then
+            payload = {
+                id = command.id,
+                ok = true,
+                result = {
+                    accepted = true,
+                    ending = true,
+                    playtestActive = true,
+                    mode = state.playtestMode,
+                    via = "playtest-plugin",
+                },
+            }
+        else
+            payload = {
+                id = command.id,
+                ok = false,
+                error = "StudioTestService:EndTest wurde abgelehnt: " .. tostring(stopError),
+                action = action,
+                pluginVersion = PLUGIN_VERSION,
+            }
+        end
+
+        local sent, sendError = request("POST", "/studio/result", payload)
+        if not sent then
+            warn(string.format("[%s] Stop-Antwort konnte nicht gesendet werden: %s", PLUGIN_NAME, tostring(sendError)))
+        end
+        if stopped then
+            state.running = false
+            return true
+        end
+        warn(string.format("[%s] %s", PLUGIN_NAME, tostring(payload.error)))
+        return false
+    end
+
+    if action == "get_play_state" or action == "ping" then
+        local result = reporterPlayState()
+        result.pong = action == "ping"
+        request("POST", "/studio/result", { id = command.id, ok = true, result = result })
+    else
+        request("POST", "/studio/result", {
+            id = command.id,
+            ok = false,
+            error = "Aktion '" .. action .. "' ist im Playtest-Reporter nicht erlaubt. Nutze Status/Stop oder beende den Test vor dauerhaften Aenderungen.",
+        })
+    end
+    return false
+end
+
+local function runPlaytestReporter()
+    local active = plugin:GetSetting("arenaPlaytestActive")
+    local editClientId = plugin:GetSetting("arenaPlaytestEditClientId")
+    if active ~= true or typeof(editClientId) ~= "string" or editClientId == "" then
+        print(string.format("[%s] Manueller Playtest ohne Arena-Reporter.", PLUGIN_NAME))
+        return
+    end
+
+    state.clientId = editClientId .. ":play-server"
+    state.reporterEditClientId = editClientId
+    state.playtestMode = tostring(plugin:GetSetting("arenaPlaytestMode") or "play")
+    plugin.Unloading:Connect(function()
+        state.running = false
+    end)
+
+    while state.running and RunService:IsRunning() do
+        if state.token == "" then
+            local found, session = discoverSession()
+            if found then
+                state.url = tostring(session.url)
+                state.token = tostring(session.token)
+                state.sessionId = tostring(session.sessionId or "")
+            else
+                task.wait(RECONNECT_WAIT)
+                continue
+            end
+        end
+
+        local accepted, handshakeError = reporterHandshake()
+        if not accepted then
+            state.token = ""
+            warn(string.format("[%s] Playtest-Reporter Handshake: %s", PLUGIN_NAME, tostring(handshakeError)))
+            task.wait(RECONNECT_WAIT)
+            continue
+        end
+
+        state.connected = true
+        print(string.format("[%s] Playtest-Reporter verbunden; Status und Stop sind bereit.", PLUGIN_NAME))
+        while state.running and RunService:IsRunning() and state.token ~= "" do
+            local ok, pollResponse = request("GET", "/studio/poll")
+            if not ok then
+                state.token = ""
+                state.connected = false
+                warn(string.format("[%s] Playtest-Reporter Poll: %s", PLUGIN_NAME, tostring(pollResponse)))
+                break
+            end
+            if pollResponse.command then
+                if handleReporterCommand(pollResponse.command) then
+                    return
+                end
+            else
+                task.wait(POLL_IDLE_WAIT)
+            end
+        end
+        if state.running and RunService:IsRunning() then
+            task.wait(RECONNECT_WAIT)
+        end
+    end
+    state.connected = false
+end
+
+if RunService:IsStudio() and RunService:IsRunning() then
+    if RunService:IsServer() then
+        task.spawn(runPlaytestReporter)
+    else
+        print(string.format("[%s] Client-Datenmodell ohne Server-Reporter.", PLUGIN_NAME))
+    end
+    return
+end
+
 local function readPlayState(): any
     local editModeActive = true
     local studioTestAvailable = pcall(function()
@@ -393,161 +567,6 @@ local function coerceValue(raw: any): any
 end
 
 -- ===========================================================================
--- Temporary playtest server reporter
--- ===========================================================================
-
-local function buildPlaytestReporterSource(): string
-    local replacements: { [string]: string } = {
-        ARENA_URL = HttpService:JSONEncode(state.url),
-        ARENA_TOKEN = HttpService:JSONEncode(state.token),
-        ARENA_CLIENT = HttpService:JSONEncode(state.clientId .. ":play-server"),
-        ARENA_EDIT_CLIENT = HttpService:JSONEncode(state.clientId),
-        ARENA_VERSION = HttpService:JSONEncode(PLUGIN_VERSION),
-        ARENA_PLACE_NAME = HttpService:JSONEncode(readPlaceName()),
-        ARENA_MODE = HttpService:JSONEncode(state.playtestMode or "play"),
-    }
-    local source = [==[
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local StudioTestService = game:GetService("StudioTestService")
-if not RunService:IsStudio() or not RunService:IsServer() or not RunService:IsRunning() then
-    return
-end
-
-local bridgeUrl = __ARENA_URL__
-local bridgeToken = __ARENA_TOKEN__
-local clientId = __ARENA_CLIENT__
-local editClientId = __ARENA_EDIT_CLIENT__
-local pluginVersion = __ARENA_VERSION__
-local placeName = __ARENA_PLACE_NAME__
-local playtestMode = __ARENA_MODE__
-
-local function decode(response)
-    if not response.Success then
-        return false, "HTTP " .. tostring(response.StatusCode) .. ": " .. tostring(response.Body)
-    end
-    local ok, body = pcall(function()
-        return HttpService:JSONDecode(response.Body)
-    end)
-    return ok, body
-end
-
-local function rediscover()
-    local ok, response = pcall(function()
-        return HttpService:RequestAsync({ Url = "http://127.0.0.1:32192/v1/session", Method = "GET" })
-    end)
-    if not ok then return false end
-    local decoded, session = decode(response)
-    if decoded and session and session.ok then
-        bridgeUrl = session.url
-        bridgeToken = session.token
-        return true
-    end
-    return false
-end
-
-local function request(method, requestPath, body)
-    for attempt = 1, 2 do
-        local options = {
-            Url = bridgeUrl .. requestPath,
-            Method = method,
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = "Bearer " .. bridgeToken,
-                ["X-Client-Id"] = clientId,
-                ["X-Client-Name"] = "Arena Playtest Server",
-            },
-        }
-        if body ~= nil then options.Body = HttpService:JSONEncode(body) end
-        local ok, response = pcall(function()
-            return HttpService:RequestAsync(options)
-        end)
-        if ok then
-            if (response.StatusCode == 401 or response.StatusCode == 403) and attempt == 1 then
-                rediscover()
-            else
-                return decode(response)
-            end
-        else
-            return false, tostring(response)
-        end
-    end
-    return false, "Keine gueltige Bridge-Session"
-end
-
-local function handshake()
-    return request("POST", "/studio/handshake", {
-        clientId = clientId,
-        name = "Roblox Studio Playtest Server",
-        version = pluginVersion,
-        place = tostring(game.PlaceId),
-        placeId = game.PlaceId,
-        placeName = placeName,
-        gameId = game.GameId,
-        placeVersion = game.PlaceVersion,
-        isEdit = false,
-        isRunning = true,
-        dataModelRole = "play-server",
-        editClientId = editClientId,
-        playtestActive = true,
-        playtestMode = playtestMode,
-    })
-end
-
-handshake()
-while true do
-    local ok, response = request("GET", "/studio/poll")
-    if not ok then
-        task.wait(2)
-        handshake()
-    elseif response.command then
-        local command = response.command
-        if command.action == "stop_game" then
-            local stopped, stopError = pcall(function()
-                StudioTestService:EndTest("Arena AI Stop")
-            end)
-            request("POST", "/studio/result", {
-                id = command.id,
-                ok = stopped,
-                result = stopped and { stopped = true, playtestActive = false, message = "Playtest wird beendet" } or nil,
-                error = stopped and nil or tostring(stopError),
-            })
-            if stopped then return end
-        elseif command.action == "get_play_state" or command.action == "ping" then
-            request("POST", "/studio/result", {
-                id = command.id,
-                ok = true,
-                result = { pong = command.action == "ping", playtestActive = true, isRunning = true, isEdit = false, dataModelRole = "play-server" },
-            })
-        else
-            request("POST", "/studio/result", {
-                id = command.id,
-                ok = false,
-                error = "Der Playtest-Reporter akzeptiert nur Status und Stop.",
-            })
-        end
-    else
-        task.wait(0.2)
-    end
-end
-]==]
-    for key, value in pairs(replacements) do
-        source = source:gsub("__" .. key .. "__", function()
-            return value
-        end)
-    end
-    return source
-end
-
-local function createPlaytestReporter(): Script
-    local reporter = Instance.new("Script")
-    reporter.Name = "__ArenaPlaytestReporter"
-    reporter.Source = buildPlaytestReporterSource()
-    reporter.Parent = ServerScriptService
-    return reporter
-end
-
--- ===========================================================================
 -- Command handlers
 -- ===========================================================================
 
@@ -602,21 +621,30 @@ handlers.play_game = function(params)
     state.playtestStarting = true
     state.playtestMode = mode
     state.playtestError = nil
-    local reporter = createPlaytestReporter()
-    pcall(function()
-        ChangeHistoryService:SetWaypoint("Arena Playtest starten")
+    local prepared, prepareError = pcall(function()
+        -- Plugin-Einstellungen ueberleben den Wechsel in das Test-Datenmodell.
+        -- Ohne diese Zuordnung wird der Test gar nicht erst gestartet.
+        plugin:SetSetting("arenaPlaytestEditClientId", state.clientId)
+        plugin:SetSetting("arenaPlaytestMode", mode)
+        plugin:SetSetting("arenaPlaytestActive", true)
     end)
+    if not prepared then
+        state.playtestStarting = false
+        state.playtestMode = nil
+        error("Playtest-Reporter konnte nicht vorbereitet werden: " .. tostring(prepareError), 0)
+    end
 
     task.spawn(function()
-        task.wait(0.2)
         local ok, result = pcall(function()
-            local args = { source = "Arena Studio Connecter", mode = mode }
+            local args = { source = "Arena Studio Connecter", mode = mode, reporter = "plugin" }
             if mode == "run" then
                 return StudioTestService:ExecuteRunModeAsync(args)
             end
             return StudioTestService:ExecutePlayModeAsync(args)
         end)
-        reporter:Destroy()
+        pcall(function()
+            plugin:SetSetting("arenaPlaytestActive", false)
+        end)
         state.playtestStarting = false
         state.playtestMode = nil
         if ok then
@@ -630,8 +658,8 @@ handlers.play_game = function(params)
 end
 
 handlers.stop_game = function()
-    -- Bei echten Playtests leitet die Bridge diesen Befehl an den temporären
-    -- Server-Reporter weiter. RunService:Stop ist nur fuer die alte Simulation
+    -- Bei echten Playtests leitet die Bridge diesen Befehl an die zweite
+    -- Plugin-Instanz weiter. RunService:Stop ist nur fuer die alte Simulation
     -- im selben Datenmodell vorgesehen.
     if RunService:IsRunning() then
         RunService:Stop()
@@ -1029,11 +1057,21 @@ local function handleCommand(command: any)
     if not handler then
         payload = { id = command.id, ok = false, error = "Unbekannte Aktion: " .. tostring(command.action) }
     else
-        local ok, result = pcall(handler, command.params or {})
+        local ok, result = xpcall(function()
+            return handler(command.params or {})
+        end, function(handlerError)
+            return debug.traceback(tostring(handlerError), 2)
+        end)
         if ok then
             payload = { id = command.id, ok = true, result = result }
         else
-            payload = { id = command.id, ok = false, error = tostring(result) }
+            payload = {
+                id = command.id,
+                ok = false,
+                error = tostring(result),
+                action = tostring(command.action),
+                pluginVersion = PLUGIN_VERSION,
+            }
         end
     end
 
@@ -1062,6 +1100,7 @@ local function handshake(): (boolean, any)
         accountDisplayName = account.displayName,
         isEdit = RunService:IsEdit(),
         isRunning = RunService:IsRunning(),
+        editModeActive = playState.editModeActive,
         dataModelRole = "edit",
         playtestActive = playState.playtestActive,
         playtestMode = playState.mode,

@@ -1,6 +1,6 @@
 {
   "name": "arena-studio-connecter",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Arena Studio Connecter - sichere Desktop-Bridge zwischen Arena Agent und Roblox Studio",
   "type": "module",
   "main": "desktop/main.js",

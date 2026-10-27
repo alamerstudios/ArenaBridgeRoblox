@@ -32,6 +32,35 @@ export const SUPPORTED_ACTIONS = [
 const ACTION_NAMES = new Set(SUPPORTED_ACTIONS.map((a) => a.action));
 export const LOCAL_ACTION_NAMES = new Set(SUPPORTED_ACTIONS.filter((entry) => entry.scope === 'desktop').map((entry) => entry.action));
 
+export function commandFailure(command, scope = 'studio') {
+  const timeout = command.state === 'timeout';
+  return {
+    code: timeout ? 'COMMAND_TIMEOUT' : (scope === 'desktop' ? 'LOCAL_ACTION_FAILED' : 'STUDIO_ACTION_FAILED'),
+    message: typeof command.error === 'string' ? command.error : 'Die Aktion wurde ohne Fehlerdetails beendet.',
+    details: {
+      ...(command.errorDetails ?? {}),
+      commandId: command.id,
+      action: command.action,
+      state: command.state,
+      targetClientId: command.targetClientId,
+      assignedClientId: command.assignedClientId,
+      durationMs: command.durationMs,
+    },
+  };
+}
+
+function commandPayload(command, scope = 'studio') {
+  const pending = command.state === 'pending' || command.state === 'dispatched' || command.state === 'running';
+  const succeeded = pending || command.ok === true;
+  return {
+    ok: succeeded,
+    command,
+    result: command.result ?? null,
+    error: succeeded ? null : commandFailure(command, scope),
+    ...(pending ? { pending: true } : {}),
+  };
+}
+
 /** Execute a host-local action without sending its secrets or files to Studio. */
 export async function performLocalAction(ctx, { action, params = {}, targetClientId = null, source = 'http' }) {
   const { session, config, logger } = ctx;
@@ -121,15 +150,12 @@ export function createApiRoutes(ctx) {
         const done = await performLocalAction({ session, queue, logger, config }, {
           action, params: params ?? {}, targetClientId: targetClientId || null, source,
         });
-        return sendJson(res, done.ok ? 200 : 502, { ok: done.ok, command: done });
+        return sendJson(res, 200, commandPayload(done, 'desktop'));
       }
 
       const resolved = resolveStudioTarget(session, action, targetClientId || null);
       if (resolved.error === 'STUDIO_CLIENT_OFFLINE') {
         return sendError(res, 409, 'STUDIO_CLIENT_OFFLINE', `Studio client "${targetClientId}" is not connected.`);
-      }
-      if (resolved.error === 'PLAYTEST_REPORTER_OFFLINE') {
-        return sendError(res, 409, 'PLAYTEST_REPORTER_OFFLINE', 'Der Playtest startet noch oder sein Server ist nicht mehr verbunden. Warte kurz und versuche Stop erneut.');
       }
       if (!targetClientId && resolved.clients.length > 1) {
         return sendError(res, 400, 'TARGET_REQUIRED', 'Multiple Studio Places are open. Set "targetClientId" to select one.', {
@@ -156,8 +182,16 @@ export function createApiRoutes(ctx) {
       const done = await promise;
       if (done.ok) session.stats.commandsCompleted += 1; else session.stats.commandsFailed += 1;
 
-      const status = done.ok ? 200 : (done.state === 'timeout' ? 504 : 502);
-      sendJson(res, status, { ok: done.ok, command: done });
+      if (done.ok && action === 'play_game') {
+        const mode = done.result?.mode ?? params?.mode ?? 'play';
+        session.touchClient(resolved.targetClientId, {
+          playtestActive: true,
+          playtestMode: mode,
+          isRunning: mode === 'simulation',
+          editModeActive: mode === 'simulation',
+        });
+      }
+      sendJson(res, done.state === 'timeout' ? 504 : 200, commandPayload(done));
     },
 
     /** GET /command/:id — look up a previously issued command. */
@@ -166,7 +200,7 @@ export function createApiRoutes(ctx) {
         ?? (queue.inFlight.has(id) ? queue.describe(queue.inFlight.get(id)) : null)
         ?? (queue.pending.find((c) => c.id === id) ? queue.describe(queue.pending.find((c) => c.id === id)) : null);
       if (!found) return sendError(res, 404, 'COMMAND_NOT_FOUND', `No command with id "${id}".`);
-      sendJson(res, 200, { ok: true, command: found });
+      sendJson(res, 200, commandPayload(found));
     },
 
     /** GET /queue — current queue snapshot. */

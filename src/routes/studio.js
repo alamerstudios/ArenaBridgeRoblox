@@ -50,6 +50,7 @@ export function createStudioRoutes(ctx) {
         accountDisplayName: data.accountDisplayName,
         isEdit: data.isEdit,
         isRunning: data.isRunning,
+        editModeActive: data.editModeActive,
         dataModelRole: data.dataModelRole ?? 'edit',
         editClientId: data.editClientId,
         playtestActive: data.playtestActive,
@@ -76,7 +77,7 @@ export function createStudioRoutes(ctx) {
     async poll(req, res) {
       const headerId = req.headers['x-client-id'];
       const clientId = headerId ? String(headerId) : null;
-      if (clientId) session.touchClient(clientId);
+      if (clientId && session.clients.has(clientId)) session.touchClient(clientId);
 
       const command = queue.dequeue(clientId);
       if (command) return sendJson(res, 200, { ok: true, command: publicCommand(command) });
@@ -105,7 +106,7 @@ export function createStudioRoutes(ctx) {
       const body = await readJsonBody(req, config.maxBodyBytes);
       if (!body.ok) return sendError(res, 400, 'INVALID_BODY', body.error);
 
-      const { id, ok, result, error } = body.data ?? {};
+      const { id, ok, result, error, action, pluginVersion } = body.data ?? {};
       if (typeof id !== 'string' || !id) return sendError(res, 400, 'MISSING_ID', 'Field "id" is required.');
       const clientId = req.headers['x-client-id'] ? String(req.headers['x-client-id']) : null;
       const inFlight = queue.inFlight.get(id);
@@ -113,7 +114,12 @@ export function createStudioRoutes(ctx) {
         return sendError(res, 409, 'WRONG_STUDIO_CLIENT', 'This command belongs to a different Studio Place.');
       }
 
-      const completed = queue.complete(id, { ok: ok !== false, result: result ?? null, error: error ?? null }, clientId);
+      const completed = queue.complete(id, {
+        ok: ok !== false,
+        result: result ?? null,
+        error: error ?? null,
+        details: ok === false ? { action: action ?? null, pluginVersion: pluginVersion ?? null } : null,
+      }, clientId);
       if (!completed) return sendError(res, 404, 'COMMAND_NOT_FOUND', `No in-flight command with id "${id}".`);
 
       logger[completed.ok ? 'info' : 'warn'](`command ${completed.ok ? 'completed' : 'failed'}: ${completed.action}`, {
@@ -122,6 +128,8 @@ export function createStudioRoutes(ctx) {
         durationMs: completed.durationMs,
         ...(completed.ok ? {} : { error: completed.error }),
       });
+      // EndTest has already run synchronously when this success arrives. Only
+      // then retire the reporter; a failed EndTest must remain retryable.
       if (completed.ok && completed.action === 'stop_game' && session.clients.get(clientId)?.dataModelRole === 'play-server') {
         session.removeClient(clientId);
       }

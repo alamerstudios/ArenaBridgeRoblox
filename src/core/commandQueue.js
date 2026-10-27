@@ -37,6 +37,7 @@ export class CommandQueue extends EventEmitter {
       completedAt: null,
       result: null,
       error: null,
+      errorDetails: null,
     };
 
     const timeoutMs = input.timeoutMs ?? this.timeoutMs;
@@ -86,7 +87,7 @@ export class CommandQueue extends EventEmitter {
   }
 
   /** Studio reports a result for a previously dispatched command. */
-  complete(id, { ok = true, result = null, error = null } = {}, clientId = null) {
+  complete(id, { ok = true, result = null, error = null, details = null } = {}, clientId = null) {
     const command = this.inFlight.get(id);
     if (!command) return null;
     if (command.assignedClientId && command.assignedClientId !== clientId) return null;
@@ -95,6 +96,7 @@ export class CommandQueue extends EventEmitter {
     command.state = ok ? 'completed' : 'failed';
     command.result = result;
     command.error = ok ? null : (error ?? 'unknown error');
+    command.errorDetails = ok ? null : details;
     command.completedAt = Date.now();
     this.#finish(command);
     return this.describe(command);
@@ -127,6 +129,7 @@ export class CommandQueue extends EventEmitter {
       ok: command.state === 'completed',
       result: command.result,
       error: command.error,
+      errorDetails: command.errorDetails,
     };
   }
 

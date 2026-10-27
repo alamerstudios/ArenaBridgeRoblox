@@ -22,6 +22,7 @@ const CLIENT_FIELDS = [
   'accountDisplayName',
   'isEdit',
   'isRunning',
+  'editModeActive',
   'dataModelRole',
   'editClientId',
   'playtestActive',

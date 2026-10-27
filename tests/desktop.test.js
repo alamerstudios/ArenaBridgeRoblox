@@ -108,6 +108,17 @@ test('Studio plugin never touches the protected HTTP setting and reconnects resi
   assert.ok(lua.includes(`local PLUGIN_VERSION = "${pkg.version}"`), 'plugin version must match the app version');
 });
 
+test('playtest control uses the server plugin instance without injecting a Script', () => {
+  const lua = fs.readFileSync(new URL('../roblox/ArenaStudioConnecter.server.lua', import.meta.url), 'utf8');
+  assert.ok(lua.includes('if RunService:IsServer() then'));
+  assert.ok(lua.includes('StudioTestService:EndTest("Arena AI Stop")'));
+  assert.ok(lua.includes('plugin:GetSetting("arenaPlaytestEditClientId")'));
+  assert.ok(lua.includes('debug.traceback'), 'action failures must retain the Luau traceback');
+  assert.ok(lua.includes('pluginVersion = PLUGIN_VERSION'));
+  assert.equal(lua.includes('ServerScriptService'), false, 'no temporary server Script may be injected');
+  assert.equal(lua.includes('ChangeHistoryService'), false, 'playtest control must not mutate the edit DataModel');
+});
+
 test('generated plugin model embeds the shipped Luau source byte for byte', () => {
   const lua = fs.readFileSync(new URL('../roblox/ArenaStudioConnecter.server.lua', import.meta.url), 'utf8');
   const model = buildPluginModel(lua);

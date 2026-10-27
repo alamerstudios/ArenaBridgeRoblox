@@ -26,7 +26,7 @@ import { RobloxMetadataService } from '../desktop/robloxMetadata.js';
 import { BlenderService } from '../src/services/blenderService.js';
 import { UpdateManager } from '../desktop/updateManager.js';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 const ARENA_URL = 'https://arena.ai/agent';
 const ALLOWED_EXTERNAL_URLS = new Set([
   ARENA_URL,
